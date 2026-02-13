@@ -1,11 +1,6 @@
-# Place inside your server block
+# ضع هذا داخل server block في Nginx
 location / {
     try_files $uri $uri/ /index.php?$query_string;
-}
-
-# Optional pretty URL support if you still use /d/{id}/{filename}
-location ~ ^/d/(\d+)/(.+)$ {
-    rewrite ^/d/(\d+)/(.+)$ /file.php?id=$1 last;
 }
 
 location ~ \.php$ {

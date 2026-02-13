@@ -1,24 +1,33 @@
 # Safe Drive PHP Edition
 
-نسخة PHP/MySQL مع تسجيل XenForo API.
+نسخة PHP + MySQL مع تسجيل XenForo API ودعم RTL عربي.
 
 ## المتطلبات
 - PHP 8.1+
 - MySQL / phpMyAdmin
-- `curl`, `pdo_mysql`
-- خادم Nginx أو Apache
+- curl + pdo_mysql
+- Nginx أو Apache
 
 ## الإعداد
-1. أنشئ قاعدة بيانات `drive`.
+1. أنشئ قاعدة البيانات `drive`.
 2. استورد `schema.sql`.
-3. عدّل `config.php` أو ENV (`DB_*`, `XF_*`).
-4. ارفع الملفات.
-5. تأكد أن `uploads/` قابلة للكتابة.
+3. عدّل `config.php` (أو ENV).
+4. ارفع الملفات مع صلاحية كتابة لمجلد `uploads/`.
+5. في Nginx استخدم `nginx.conf.example`.
 
-## Nginx (مهم)
-استخدم إعدادات `nginx.conf.example` داخل server block لديك.
+## المسارات
+- `/login` تسجيل الدخول
+- `/drive` الملف الرئيسي
+- `/recent` الأحدث
+- `/starred` المميزة
+- `/trash` المحذوفات
+- `/folders/{id}` فتح مجلد
+- `/d/{id}/{filename}` رابط الملف (بدون `file.php`)
 
-## ملاحظات
-- الواجهة الآن تستخدم أيقونات المشروع الأصلية من `public/` (home/recent/starred/trash/google-logo/search).
-- الروابط تعمل على Nginx بدون `.htaccess` لأن التطبيق يستخدم `file.php?id=...` بشكل مباشر.
-- أسماء الملفات العربية محفوظة كما هي في العرض والتنزيل.
+## الميزات الحالية
+- واجهة عربية RTL.
+- اسم المستخدم + الصورة بعد تسجيل XenForo.
+- إنشاء مجلدات.
+- نقل الملفات بين المجلدات.
+- عرض Thumbnail للصور داخل قائمة الملفات.
+- عرض Thumbnail للمجلد عند توفر صورة داخله.
