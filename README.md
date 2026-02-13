@@ -1,57 +1,29 @@
-# Cloud Storage Application
+# Safe Drive PHP Edition
 
-<img src="public/loginPage.png" alt="drawing" width="500"/>              <img src="public/home.png" alt="drawing" width="500"/>
+تم تحويل المشروع إلى نسخة PHP + MySQL مع واجهة مطابقة لفكرة Google Drive Clone وتسجيل دخول عبر XenForo API.
 
-A full-stack cloud storage application built using React, Firebase, and styled-components.
+## المتطلبات
+- PHP 8.1+
+- MySQL / phpMyAdmin (CloudPanel)
+- امتداد cURL و PDO_MYSQL
 
-## Table of Contents
+## الإعداد السريع
+1. أنشئ قاعدة بيانات باسم `drive`.
+2. نفذ ملف `schema.sql` داخل phpMyAdmin.
+3. عدّل بيانات الاتصال في `config.php` (أو عبر متغيرات البيئة).
+4. ارفع كل الملفات إلى موقعك.
+5. تأكد من صلاحية الكتابة على مجلد `uploads/`.
 
-- [Demo](#demo)
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Development Highlights](#development-highlights)
-- [Future Plans](#future-plans)
-- [Contributing](#contributing)
-- [License](#license)
+## التشغيل المحلي
+```bash
+php -S 0.0.0.0:8000
+```
+ثم افتح:
+`http://localhost:8000/?page=login`
 
-## Demo
-
-Explore App [here](https://google-drive-clone-roan.vercel.app/)
-
-## Features
-
-- User authentication with Firebase
-- Upload, download, and delete files
-- Star and trash functionality
-- Responsive design for a seamless user experience
-
-## Tech Stack
-
-- Frontend: React, styled-components
-- Backend: Firebase (Authentication, Firestore)
-- Other: react-router-dom, react-toastify
-
-## Installation
-
-1. Clone the repository: `git clone https://github.com/Mayankkatheriya/google-drive-clone.git`
-2. Change into the project directory: `cd google-drive-clone`
-3. Install dependencies: `npm install`
-
-## Usage
-
-1. Start the development server: `npm run dev`
-2. Open the app in your browser: `http://localhost:5173`
-
-## Development Highlights
-
-- Describe key aspects of your development process, such as authentication setup, data storage choices, etc.
-
-## Future Plans
-
-- Mention any future enhancements or features you plan to implement.
-
-## Contributing
-
-Feel free to contribute by opening issues or submitting pull requests.
+## الميزات
+- تسجيل دخول XenForo API.
+- رفع الملفات.
+- عرض الملفات (My Drive / Recent / Starred / Trash / Search).
+- نقل إلى سلة المهملات، استعادة، حذف نهائي.
+- تخزين كل بيانات الملفات في MySQL.
