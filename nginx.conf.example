@@ -1,0 +1,15 @@
+# Place inside your server block
+location / {
+    try_files $uri $uri/ /index.php?$query_string;
+}
+
+# Optional pretty URL support if you still use /d/{id}/{filename}
+location ~ ^/d/(\d+)/(.+)$ {
+    rewrite ^/d/(\d+)/(.+)$ /file.php?id=$1 last;
+}
+
+location ~ \.php$ {
+    include fastcgi_params;
+    fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+}

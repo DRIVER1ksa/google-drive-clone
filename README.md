@@ -1,57 +1,24 @@
-# Cloud Storage Application
+# Safe Drive PHP Edition
 
-<img src="public/loginPage.png" alt="drawing" width="500"/>              <img src="public/home.png" alt="drawing" width="500"/>
+نسخة PHP/MySQL مع تسجيل XenForo API.
 
-A full-stack cloud storage application built using React, Firebase, and styled-components.
+## المتطلبات
+- PHP 8.1+
+- MySQL / phpMyAdmin
+- `curl`, `pdo_mysql`
+- خادم Nginx أو Apache
 
-## Table of Contents
+## الإعداد
+1. أنشئ قاعدة بيانات `drive`.
+2. استورد `schema.sql`.
+3. عدّل `config.php` أو ENV (`DB_*`, `XF_*`).
+4. ارفع الملفات.
+5. تأكد أن `uploads/` قابلة للكتابة.
 
-- [Demo](#demo)
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Development Highlights](#development-highlights)
-- [Future Plans](#future-plans)
-- [Contributing](#contributing)
-- [License](#license)
+## Nginx (مهم)
+استخدم إعدادات `nginx.conf.example` داخل server block لديك.
 
-## Demo
-
-Explore App [here](https://google-drive-clone-roan.vercel.app/)
-
-## Features
-
-- User authentication with Firebase
-- Upload, download, and delete files
-- Star and trash functionality
-- Responsive design for a seamless user experience
-
-## Tech Stack
-
-- Frontend: React, styled-components
-- Backend: Firebase (Authentication, Firestore)
-- Other: react-router-dom, react-toastify
-
-## Installation
-
-1. Clone the repository: `git clone https://github.com/Mayankkatheriya/google-drive-clone.git`
-2. Change into the project directory: `cd google-drive-clone`
-3. Install dependencies: `npm install`
-
-## Usage
-
-1. Start the development server: `npm run dev`
-2. Open the app in your browser: `http://localhost:5173`
-
-## Development Highlights
-
-- Describe key aspects of your development process, such as authentication setup, data storage choices, etc.
-
-## Future Plans
-
-- Mention any future enhancements or features you plan to implement.
-
-## Contributing
-
-Feel free to contribute by opening issues or submitting pull requests.
+## ملاحظات
+- الواجهة الآن تستخدم أيقونات المشروع الأصلية من `public/` (home/recent/starred/trash/google-logo/search).
+- الروابط تعمل على Nginx بدون `.htaccess` لأن التطبيق يستخدم `file.php?id=...` بشكل مباشر.
+- أسماء الملفات العربية محفوظة كما هي في العرض والتنزيل.
