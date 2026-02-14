@@ -84,10 +84,7 @@ function require_login(): void {
 function format_bytes(int $bytes): string {
     $units = ['B', 'KB', 'MB', 'GB', 'TB'];
     $i = 0;
-    while ($bytes >= 1024 && $i < count($units) - 1) {
-        $bytes /= 1024;
-        $i++;
-    }
+    while ($bytes >= 1024 && $i < count($units) - 1) { $bytes /= 1024; $i++; }
     return round($bytes, 2) . ' ' . $units[$i];
 }
 
@@ -134,24 +131,14 @@ if (!empty($segments[0]) && $segments[0] === 'logout') {
 
 $route = 'login';
 $currentFolderId = null;
-if (empty($segments)) {
-    $route = empty($_SESSION['user']) ? 'login' : 'drive';
-} elseif ($segments[0] === 'login') {
-    $route = 'login';
-} elseif ($segments[0] === 'drive') {
-    $route = 'drive';
-} elseif ($segments[0] === 'recent') {
-    $route = 'recent';
-} elseif ($segments[0] === 'starred') {
-    $route = 'starred';
-} elseif ($segments[0] === 'trash') {
-    $route = 'trash';
-} elseif ($segments[0] === 'search') {
-    $route = 'search';
-} elseif ($segments[0] === 'folders' && isset($segments[1])) {
-    $route = 'folder';
-    $currentFolderId = (int)$segments[1];
-}
+if (empty($segments)) $route = empty($_SESSION['user']) ? 'login' : 'drive';
+elseif ($segments[0] === 'login') $route = 'login';
+elseif ($segments[0] === 'drive' || $segments[0] === 'home') $route = 'drive';
+elseif ($segments[0] === 'recent') $route = 'recent';
+elseif ($segments[0] === 'starred') $route = 'starred';
+elseif ($segments[0] === 'trash') $route = 'trash';
+elseif ($segments[0] === 'search') $route = 'search';
+elseif ($segments[0] === 'folders' && isset($segments[1])) { $route = 'folder'; $currentFolderId = (int)$segments[1]; }
 
 $flash = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -161,8 +148,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $xf = xf_auth($config, trim($_POST['username'] ?? ''), (string)($_POST['password'] ?? ''));
             if (!$xf) throw new RuntimeException('فشل تسجيل الدخول عبر XenForo API.');
             $_SESSION['user'] = $xf;
-            header('Location: /drive');
-            exit;
+            header('Location: /drive'); exit;
         }
 
         require_login();
@@ -240,7 +226,7 @@ $folders = [];
 $allFolders = [];
 $storage = 0;
 $search = trim((string)($_GET['q'] ?? ''));
-$pageTitle = 'ملفاتي';
+$pageTitle = 'My Drive';
 
 if ($user && $route !== 'login' && $pdo) {
     $sum = $pdo->prepare('SELECT COALESCE(SUM(size_bytes),0) FROM files WHERE user_id=? AND is_trashed=0');
@@ -262,8 +248,7 @@ if ($user && $route !== 'login' && $pdo) {
     }
 
     $where = 'user_id=:uid';
-    if ($route === 'trash') $where .= ' AND is_trashed=1';
-    else $where .= ' AND is_trashed=0';
+    if ($route === 'trash') $where .= ' AND is_trashed=1'; else $where .= ' AND is_trashed=0';
     if ($route === 'starred') $where .= ' AND is_starred=1';
     if ($route === 'search') $where .= ' AND filename LIKE :search';
     if ($route === 'folder') $where .= ' AND folder_id=:folder';
@@ -276,10 +261,9 @@ if ($user && $route !== 'login' && $pdo) {
     $st->execute();
     $files = $st->fetchAll();
 
-    $map = ['drive'=>'ملفاتي','recent'=>'الأحدث','starred'=>'المميّز بنجمة','trash'=>'سلة المهملات','search'=>'نتائج البحث','folder'=>'المجلد'];
-    $pageTitle = $map[$route] ?? 'ملفاتي';
+    $map = ['drive'=>'My Drive','recent'=>'Recent','starred'=>'Starred','trash'=>'Trash','search'=>'Search Results','folder'=>'Folder'];
+    $pageTitle = $map[$route] ?? 'My Drive';
 }
-
 ?>
 <!doctype html>
 <html lang="ar" dir="rtl">
@@ -287,114 +271,134 @@ if ($user && $route !== 'login' && $pdo) {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Safe Drive</title>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" />
   <link rel="stylesheet" href="/public/assets/style.css" />
 </head>
 <body>
 <?php if ($route === 'login'): ?>
 <main class="login-wrap">
   <section class="login-card">
-    <img src="/public/google-logo.png" class="logo" alt="logo" />
+    <img src="/public/drive.svg" class="logo" alt="logo" />
     <h1>سيف درايف</h1>
-    <p>سجّل الدخول بحساب المنتدى</p>
+    <p>سجّل دخولك بحساب المنتدى</p>
+    <?php if ($dbError): ?><div class="flash error">خطأ قاعدة البيانات: <?= htmlspecialchars($dbError) ?></div><?php endif; ?>
+    <?php if ($flash): ?><div class="flash <?= $flash['type'] ?>"><?= htmlspecialchars($flash['msg']) ?></div><?php endif; ?>
     <form method="post" class="login-form">
       <input type="hidden" name="action" value="login" />
       <input name="username" placeholder="اسم المستخدم أو البريد" required />
       <input name="password" type="password" placeholder="كلمة المرور" required />
-      <button type="submit">بدء الاستخدام</button>
+      <button type="submit">ابدأ الآن</button>
     </form>
-    <?php if ($flash): ?><div class="flash <?= $flash['type'] ?>"><?= htmlspecialchars($flash['msg']) ?></div><?php endif; ?>
   </section>
   <img src="/public/login.gif" class="hero" alt="login" />
 </main>
 <?php else: ?>
 <header class="topbar">
-  <div class="brand"><span class="material-symbols-outlined">menu</span><img src="/public/google-logo.png" alt="" /><span>Drive</span></div>
-  <form class="search" method="get" action="/search">
-    <span class="material-symbols-outlined">search</span>
-    <input name="q" value="<?= htmlspecialchars($search) ?>" placeholder="ابحث في ملفاتك" />
-  </form>
-  <div class="profile"><span><?= htmlspecialchars($user['name']) ?></span><img src="<?= htmlspecialchars($user['avatar'] ?: '/public/myimg.png') ?>" alt="avatar" /><a href="/logout" class="logout">خروج</a></div>
+  <div class="brand"><span class="menu">☰</span><img src="/public/google-logo.png" alt=""/><span>Drive</span></div>
+  <form class="search" method="get" action="/search"><input name="q" placeholder="ابحث في درايف" value="<?= htmlspecialchars($search) ?>"/></form>
+  <div class="header-icons"><span>?</span><span>⚙</span></div>
+  <div class="profile"><img src="<?= htmlspecialchars($user['avatar'] ?: '/public/myimg.png') ?>" alt="avatar"/><span><?= htmlspecialchars($user['name']) ?></span></div>
 </header>
 
 <div class="layout">
   <aside class="sidebar">
-    <form method="post" enctype="multipart/form-data" class="upload-box">
-      <input type="hidden" name="action" value="upload" />
-      <input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>" />
-      <input type="hidden" name="folder_id" value="<?= $route==='folder'?(int)$currentFolderId:'' ?>" />
-      <input type="file" name="file" required />
-      <button type="submit">رفع ملف</button>
-    </form>
-
-    <form method="post" class="folder-create">
-      <input type="hidden" name="action" value="create_folder" />
-      <input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>" />
-      <input type="hidden" name="folder_id" value="<?= $route==='folder'?(int)$currentFolderId:'' ?>" />
-      <input name="folder_name" placeholder="اسم مجلد جديد" required />
-      <button type="submit">إنشاء مجلد</button>
-    </form>
+    <div class="new-wrap">
+      <button id="newBtn" class="new-btn" type="button">+ جديد</button>
+      <div id="newMenu" class="new-menu hidden">
+        <button type="button" data-open="uploadModal">رفع ملف</button>
+        <button type="button" data-open="folderModal">إنشاء مجلد</button>
+      </div>
+    </div>
 
     <nav>
-      <a href="/drive" class="<?= $route==='drive'?'active':'' ?>"><span class="material-symbols-outlined">home</span> ملفاتي</a>
-      <a href="/recent" class="<?= $route==='recent'?'active':'' ?>"><span class="material-symbols-outlined">history</span> الأحدث</a>
-      <a href="/starred" class="<?= $route==='starred'?'active':'' ?>"><span class="material-symbols-outlined">star</span> المميّز بنجمة</a>
-      <a href="/trash" class="<?= $route==='trash'?'active':'' ?>"><span class="material-symbols-outlined">delete</span> سلة المهملات</a>
+      <a href="/drive" class="<?= $route==='drive'?'active':'' ?>">📁 ملفاتي</a>
+      <a href="/recent" class="<?= $route==='recent'?'active':'' ?>">🕒 الأحدث</a>
+      <a href="/starred" class="<?= $route==='starred'?'active':'' ?>">⭐ المميزة</a>
+      <a href="/trash" class="<?= $route==='trash'?'active':'' ?>">🗑 سلة المحذوفات</a>
+      <hr>
+      <a href="#" onclick="alert('الدعم قريباً');return false;">❓ المساعدة</a>
+      <a href="#" onclick="return false;">☁️ التخزين</a>
     </nav>
-    <div class="storage">المساحة المستخدمة: <?= format_bytes($storage) ?> / 5 GB</div>
+    <div class="storage"><?= format_bytes($storage) ?> من 5 GB مستخدمة</div>
+    <a class="logout" href="/logout">خروج</a>
   </aside>
 
   <main class="content">
+    <?php if ($dbError): ?><div class="flash error">خطأ قاعدة البيانات: <?= htmlspecialchars($dbError) ?></div><?php endif; ?>
     <?php if ($flash): ?><div class="flash <?= $flash['type'] ?>"><?= htmlspecialchars($flash['msg']) ?></div><?php endif; ?>
-    <h2><?= htmlspecialchars($pageTitle) ?></h2>
 
-    <?php if ($route === 'folder'): ?><a class="back" href="/drive">⬅ الرجوع إلى ملفاتي</a><?php endif; ?>
+    <div class="section-head"><h2><?= htmlspecialchars($pageTitle) ?></h2><div>☰ ⓘ</div></div>
+    <h4 class="recent-title">Recents</h4>
 
-    <?php if (in_array($route, ['drive','folder'], true) && $folders): ?>
-      <div class="folders-grid">
-        <?php foreach ($folders as $fd): ?>
-          <a href="/folders/<?= (int)$fd['id'] ?>" class="folder-card">
-            <?php if (!empty($fd['preview_image'])): ?>
-              <img src="/<?= htmlspecialchars($fd['preview_image']) ?>" alt="preview" />
-            <?php else: ?>
-              <div class="folder-placeholder"><span class="material-symbols-outlined">folder</span></div>
-            <?php endif; ?>
-            <strong><?= htmlspecialchars($fd['name']) ?></strong>
-            <small><?= (int)$fd['items_count'] ?> عنصر</small>
-          </a>
-        <?php endforeach; ?>
-      </div>
-    <?php endif; ?>
+    <div class="folders-grid">
+      <?php foreach ($folders as $fd): ?>
+      <a href="/folders/<?= (int)$fd['id'] ?>" class="folder-card">
+        <?php if (!empty($fd['preview_image'])): ?><img src="/<?= htmlspecialchars($fd['preview_image']) ?>" alt="preview" />
+        <?php else: ?><div class="folder-placeholder">📁</div><?php endif; ?>
+        <strong><?= htmlspecialchars($fd['name']) ?></strong>
+      </a>
+      <?php endforeach; ?>
+
+      <?php foreach (array_slice($files, 0, 4) as $f): ?>
+      <a href="<?= htmlspecialchars(file_url($f)) ?>" target="_blank" class="folder-card">
+        <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" />
+        <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
+        <strong><?= htmlspecialchars($f['filename']) ?></strong>
+      </a>
+      <?php endforeach; ?>
+    </div>
 
     <div class="table">
       <div class="row head"><div>الاسم</div><div>الحجم</div><div>آخر تعديل</div><div>الخيارات</div></div>
-      <?php if (!$files): ?>
-        <div class="empty">لا توجد ملفات.</div>
-      <?php else: foreach ($files as $f): ?>
-        <div class="row">
-          <div class="name-cell">
-            <form method="post" class="inline-form"><input type="hidden" name="action" value="toggle_star"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><button class="star <?= (int)$f['is_starred']?'on':'' ?>">★</button></form>
-            <a href="<?= htmlspecialchars(file_url($f)) ?>" target="_blank">
-              <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" class="thumb-mini" alt="thumb"><?php else: ?><span class="material-symbols-outlined">description</span><?php endif; ?>
-              <?= htmlspecialchars($f['filename']) ?>
-            </a>
-          </div>
-          <div><?= format_bytes((int)$f['size_bytes']) ?></div>
-          <div><?= htmlspecialchars($f['created_at']) ?></div>
-          <div class="actions">
-            <?php if ($route === 'trash'): ?>
-              <form method="post" class="inline-form"><input type="hidden" name="action" value="restore"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><button>استعادة</button></form>
-              <form method="post" class="inline-form"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><button>حذف نهائي</button></form>
-            <?php else: ?>
-              <form method="post" class="inline-form"><input type="hidden" name="action" value="trash"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><button>إلى السلة</button></form>
-              <form method="post" class="inline-form move-form"><input type="hidden" name="action" value="move_file"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><select name="target_folder_id"><option value="">الجذر</option><?php foreach ($allFolders as $op): ?><option value="<?= (int)$op['id'] ?>" <?= ((int)$f['folder_id']===(int)$op['id'])?'selected':'' ?>><?= htmlspecialchars($op['name']) ?></option><?php endforeach; ?></select><button>نقل</button></form>
-            <?php endif; ?>
-          </div>
+      <?php if (!$files): ?><div class="empty">لا توجد ملفات.</div><?php endif; ?>
+      <?php foreach ($files as $f): ?>
+      <div class="row">
+        <div class="name-cell">
+          <form method="post" class="inline-form"><input type="hidden" name="action" value="toggle_star"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><button class="star <?= (int)$f['is_starred']?'on':'' ?>">★</button></form>
+          <a href="<?= htmlspecialchars(file_url($f)) ?>" target="_blank">
+            <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" class="thumb-mini" alt="thumb"><?php else: ?><span>📄</span><?php endif; ?>
+            <span title="<?= htmlspecialchars($f['filename']) ?>"><?= htmlspecialchars($f['filename']) ?></span>
+          </a>
         </div>
-      <?php endforeach; endif; ?>
+        <div><?= format_bytes((int)$f['size_bytes']) ?></div>
+        <div><?= htmlspecialchars($f['created_at']) ?></div>
+        <div class="actions">
+          <?php if ($route === 'trash'): ?>
+            <form method="post" class="inline-form"><input type="hidden" name="action" value="restore"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><button>استعادة</button></form>
+            <form method="post" class="inline-form"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><button>حذف نهائي</button></form>
+          <?php else: ?>
+            <form method="post" class="inline-form"><input type="hidden" name="action" value="trash"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><button>نقل للسلة</button></form>
+            <form method="post" class="inline-form"><input type="hidden" name="action" value="move_file"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><select name="target_folder_id"><option value="">الجذر</option><?php foreach ($allFolders as $op): ?><option value="<?= (int)$op['id'] ?>" <?= ((int)$f['folder_id']===(int)$op['id'])?'selected':'' ?>><?= htmlspecialchars($op['name']) ?></option><?php endforeach; ?></select><button>نقل</button></form>
+          <?php endif; ?>
+        </div>
+      </div>
+      <?php endforeach; ?>
     </div>
   </main>
 </div>
+
+<div id="uploadModal" class="modal hidden"><div class="modal-box"><button class="close" data-close>×</button><h3>اختر ملفاً لرفعه</h3>
+  <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="action" value="upload"/><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"/><input type="hidden" name="folder_id" value="<?= $route==='folder'?(int)$currentFolderId:'' ?>"/>
+    <input type="file" name="file" required>
+    <button type="submit">رفع الملف</button>
+  </form></div></div>
+
+<div id="folderModal" class="modal hidden"><div class="modal-box"><button class="close" data-close>×</button><h3>إنشاء مجلد جديد</h3>
+  <form method="post">
+    <input type="hidden" name="action" value="create_folder"/><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"/><input type="hidden" name="folder_id" value="<?= $route==='folder'?(int)$currentFolderId:'' ?>"/>
+    <input name="folder_name" placeholder="اسم المجلد" required>
+    <button type="submit">إنشاء</button>
+  </form></div></div>
+
+<script>
+const newBtn=document.getElementById('newBtn');
+const newMenu=document.getElementById('newMenu');
+newBtn?.addEventListener('click',()=>newMenu.classList.toggle('hidden'));
+document.querySelectorAll('[data-open]').forEach(el=>el.addEventListener('click',()=>{document.getElementById(el.dataset.open).classList.remove('hidden');newMenu.classList.add('hidden');}));
+document.querySelectorAll('[data-close]').forEach(el=>el.addEventListener('click',()=>el.closest('.modal').classList.add('hidden')));
+window.addEventListener('click',(e)=>{if(e.target.classList.contains('modal')) e.target.classList.add('hidden');});
+</script>
 <?php endif; ?>
 </body>
 </html>
