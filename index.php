@@ -989,6 +989,17 @@ Total files: ${info.files}`);
     <div id="uploadProgress" class="progress hidden"><div id="uploadProgressBar"></div><p id="uploadProgressText">0%</p><p id="uploadSpeedText">0 MB/s</p></div>
 
     <div class="section-head"><h2><?= htmlspecialchars($pageTitle) ?></h2><div>☰ ⓘ</div></div>
+    <div id="selectionBar" class="selection-bar hidden">
+      <div class="selection-count"><span id="selectionCount">0</span> تم اختيار ملف</div>
+      <div class="selection-actions">
+        <button type="button" data-select-cmd="download">⤓ تنزيل</button>
+        <button type="button" data-select-cmd="rename">✎ إعادة تسمية</button>
+        <button type="button" data-select-cmd="share">👥 مشاركة</button>
+        <button type="button" data-select-cmd="copy">🔗 نسخ الرابط</button>
+        <button type="button" data-select-cmd="delete">🗑 نقل للمهملات</button>
+      </div>
+    </div>
+
     <h4 class="recent-title">Recents</h4>
 
     <div class="folders-grid">
@@ -1061,12 +1072,25 @@ Total files: ${info.files}`);
     <button type="submit">إنشاء</button>
   </form></div></div>
 
+<div id="shareModal" class="modal hidden"><div class="modal-box share-modal-box"><button class="close" data-close>×</button>
+  <h3 id="shareTitle">مشاركة ملف</h3>
+  <input id="sharePeopleInput" placeholder="إضافة مستخدمين ومجموعات ومساحات وأحداث في التقويم" />
+  <div class="share-access-row"><span>وصول عام</span><select id="shareAccessSelect"><option value="public">أي شخص لديه الرابط</option><option value="private">حصري</option></select></div>
+  <div class="share-note" id="shareNote">يمكن لأي شخص لديه الرابط الوصول في ظل الحصر.</div>
+  <div class="share-actions"><button type="button" id="shareDoneBtn">تم</button><button type="button" id="shareCopyBtn">نسخ الرابط</button></div>
+</div></div>
+
 <div id="ctxMenu" class="ctx-menu hidden">
-  <button data-cmd="rename">إعادة تسمية</button>
-  <button data-cmd="move">نقل</button>
-  <button data-cmd="share">مشاركة / إلغاء المشاركة</button>
-  <button data-cmd="copy">نسخ رابط المشاركة</button>
-  <button data-cmd="delete">حذف</button>
+  <button data-cmd="open"><span>فتح باستخدام</span><b>✦</b></button>
+  <button data-cmd="download"><span>تنزيل</span><b>⤓</b></button>
+  <button data-cmd="rename"><span>إعادة تسمية</span><b>✎</b></button>
+  <button data-cmd="copy"><span>إنشاء نسخة / نسخ الرابط</span><b>⧉</b></button>
+  <hr>
+  <button data-cmd="share"><span>مشاركة</span><b>👥</b></button>
+  <button data-cmd="move"><span>تنظيم</span><b>🗂</b></button>
+  <button data-cmd="info"><span>معلومات الملف</span><b>ⓘ</b></button>
+  <hr>
+  <button data-cmd="delete"><span>إزالة</span><b>🗑</b></button>
 </div>
 
 <form id="cmdForm" method="post" class="hidden">
@@ -1157,32 +1181,71 @@ uploadForm?.addEventListener('submit',(e)=>{
 });
 
 const ctxMenu=document.getElementById('ctxMenu');
+const selectionBar=document.getElementById('selectionBar');
+const selectionCount=document.getElementById('selectionCount');
+const shareModal=document.getElementById('shareModal');
+const shareTitle=document.getElementById('shareTitle');
+const shareAccessSelect=document.getElementById('shareAccessSelect');
+const shareNote=document.getElementById('shareNote');
+const shareCopyBtn=document.getElementById('shareCopyBtn');
+const shareDoneBtn=document.getElementById('shareDoneBtn');
 let currentTarget=null;
+let selectedItems=[];
+
+function setSelected(items){
+  document.querySelectorAll('.is-selected').forEach(el=>el.classList.remove('is-selected'));
+  selectedItems=[...new Set(items)].filter(Boolean);
+  selectedItems.forEach(el=>el.classList.add('is-selected'));
+  selectionCount.textContent=String(selectedItems.length);
+  if(selectionBar) selectionBar.classList.toggle('hidden', selectedItems.length===0);
+}
+function pickOne(el){ setSelected([el]); currentTarget=el; }
+function getPrimary(){ return currentTarget || selectedItems[0] || null; }
+
 function openMenu(ev, el){
   ev.preventDefault();
+  if(!selectedItems.includes(el)) pickOne(el);
   currentTarget=el;
-  ctxMenu.style.left=ev.clientX+'px';
-  ctxMenu.style.top=ev.clientY+'px';
+  const pad=10;
+  const menuW=260, menuH=330;
+  const left=Math.min(ev.clientX, window.innerWidth-menuW-pad);
+  const top=Math.min(ev.clientY, window.innerHeight-menuH-pad);
+  ctxMenu.style.left=left+'px';
+  ctxMenu.style.top=top+'px';
   ctxMenu.classList.remove('hidden');
 }
-document.querySelectorAll('[data-type]').forEach(el=>{
-  el.addEventListener('contextmenu',(e)=>openMenu(e, el));
-});
-document.addEventListener('click',()=>ctxMenu.classList.add('hidden'));
 
-const cmdForm=document.getElementById('cmdForm');
-const cmdAction=document.getElementById('cmdAction');
-const cmdId=document.getElementById('cmdId');
-const cmdName=document.getElementById('cmdName');
-ctxMenu?.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',(e)=>{
-  e.stopPropagation();
-  if(!currentTarget) return;
-  const type=currentTarget.dataset.type;
-  const id=currentTarget.dataset.id;
-  const cmd=btn.dataset.cmd;
+function openShareDialog(el){
+  if(!el || el.dataset.type!=='file'){ alert('المشاركة متاحة للملفات فقط.'); return; }
+  shareTitle.textContent='مشاركة "'+(el.dataset.name||'ملف')+'"';
+  const isShared=!!el.dataset.shareUrl;
+  shareAccessSelect.value=isShared?'public':'private';
+  shareNote.textContent=isShared?'أي شخص لديه الرابط يمكنه الوصول.':'لا يمكن إلا للأشخاص الذين لديهم إذن الوصول.';
+  shareModal.classList.remove('hidden');
+}
 
+function submitCmd(cmd, el){
+  if(!el) return;
+  const type=el.dataset.type;
+  const id=el.dataset.id;
+  if(cmd==='open'){
+    const a=(el.tagName==='A')?el:el.querySelector('a[href]');
+    if(a){ window.open(a.href, '_blank'); return; }
+  }
+  if(cmd==='download'){
+    if(type!=='file') return;
+    const a=(el.tagName==='A')?el:el.querySelector('a[href]');
+    if(a) window.open(a.href + (a.href.includes('?')?'&':'?')+'download=1','_blank');
+    return;
+  }
+  if(cmd==='info'){
+    alert('الاسم: '+(el.dataset.name||'-')+'
+المعرف: '+(id||'-')+'
+النوع: '+type);
+    return;
+  }
   if(cmd==='rename'){
-    const n=prompt('الاسم الجديد:', currentTarget.dataset.name||'');
+    const n=prompt('الاسم الجديد:', el.dataset.name||'');
     if(!n) return;
     cmdAction.value=(type==='file'?'rename_file':'rename_folder'); cmdId.value=id; cmdName.value=n; cmdForm.submit();
   }
@@ -1192,17 +1255,78 @@ ctxMenu?.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',(e
     form.innerHTML=`<input name="action" value="move_file"><input name="id" value="${id}"><input name="target_folder_id" value="${to}"><input name="redirect" value="${window.location.pathname}">`;
     document.body.appendChild(form); form.submit();
   }
-  if(cmd==='share' && type==='file'){
-    cmdAction.value='toggle_share_file'; cmdId.value=id; cmdName.value=''; cmdForm.submit();
-  }
+  if(cmd==='share' && type==='file'){ openShareDialog(el); return; }
   if(cmd==='copy' && type==='file'){
-    const url=currentTarget.dataset.shareUrl;
-    if(!url){ alert('الملف غير مشارك. فعّل المشاركة أولاً.'); return; }
+    const url=el.dataset.shareUrl;
+    if(!url){ alert('الملف غير مشارك. استخدم نافذة المشاركة أولاً.'); return; }
     navigator.clipboard.writeText(window.location.origin+url); alert('تم نسخ رابط المشاركة');
   }
   if(cmd==='delete'){
     cmdAction.value=(type==='file'?'trash':'delete_folder'); cmdId.value=id; cmdName.value=''; cmdForm.submit();
   }
+}
+
+document.querySelectorAll('[data-type]').forEach(el=>{
+  el.classList.add('selectable-item');
+  el.addEventListener('click',(e)=>{
+    if(e.target.closest('button,form,.star')) return;
+    if(e.metaKey || e.ctrlKey){
+      const next=selectedItems.includes(el)?selectedItems.filter(x=>x!==el):[...selectedItems, el];
+      setSelected(next);
+    } else {
+      pickOne(el);
+    }
+    if(el.tagName==='A') e.preventDefault();
+  });
+  el.addEventListener('dblclick',(e)=>{
+    const a=(el.tagName==='A')?el:el.querySelector('a[href]');
+    if(a){ window.open(a.href,'_blank'); }
+  });
+  el.addEventListener('contextmenu',(e)=>openMenu(e, el));
+});
+
+document.addEventListener('click',(e)=>{
+  if(!e.target.closest('[data-type], #ctxMenu, #selectionBar, #shareModal .modal-box')){
+    setSelected([]);
+  }
+  if(!e.target.closest('#ctxMenu')) ctxMenu.classList.add('hidden');
+});
+
+document.querySelectorAll('[data-select-cmd]').forEach(btn=>btn.addEventListener('click',()=>{
+  const primary=getPrimary();
+  if(!primary) return;
+  if(selectedItems.length>1 && ['rename','move','share'].includes(btn.dataset.selectCmd)){
+    alert('هذه العملية متاحة لعنصر واحد فقط حالياً.');
+    return;
+  }
+  submitCmd(btn.dataset.selectCmd, primary);
+}));
+
+shareAccessSelect?.addEventListener('change',()=>{
+  const isPrivate=shareAccessSelect.value==='private';
+  shareNote.textContent=isPrivate?'لن يتمكن غير الأشخاص الذين لديهم إذن الوصول إلى الرابط':'أي شخص لديه الرابط سيتمكن من الوصول.';
+});
+shareCopyBtn?.addEventListener('click',()=>{
+  const primary=getPrimary();
+  if(!primary || primary.dataset.type!=='file'){ alert('اختر ملفاً أولاً.'); return; }
+  if(!primary.dataset.shareUrl){
+    if(confirm('الملف غير مشارك. تفعيل المشاركة الآن؟')){ cmdAction.value='toggle_share_file'; cmdId.value=primary.dataset.id; cmdName.value=''; cmdForm.submit(); }
+    return;
+  }
+  navigator.clipboard.writeText(window.location.origin + primary.dataset.shareUrl);
+  alert('تم نسخ الرابط');
+});
+shareDoneBtn?.addEventListener('click',()=>shareModal.classList.add('hidden'));
+
+const cmdForm=document.getElementById('cmdForm');
+const cmdAction=document.getElementById('cmdAction');
+const cmdId=document.getElementById('cmdId');
+const cmdName=document.getElementById('cmdName');
+ctxMenu?.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',(e)=>{
+  e.stopPropagation();
+  const primary=getPrimary();
+  if(!primary) return;
+  submitCmd(btn.dataset.cmd, primary);
 }));
 </script>
 <?php endif; ?>
