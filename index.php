@@ -104,6 +104,7 @@ try {
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?? '/';
 $path = trim($uri, '/');
 $segments = $path === '' ? [] : explode('/', $path);
+$cssVersion = @filemtime(__DIR__ . '/public/assets/style.css') ?: time();
 
 if (!empty($segments[0]) && $segments[0] === 'd' && isset($segments[1])) {
     require_login();
@@ -272,7 +273,7 @@ if ($user && $route !== 'login' && $pdo) {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Safe Drive</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" />
-  <link rel="stylesheet" href="/public/assets/style.css" />
+  <link rel="stylesheet" href="/public/assets/style.css?v=<?= $cssVersion ?>" />
 </head>
 <body>
 <?php if ($route === 'login'): ?>
@@ -297,7 +298,7 @@ if ($user && $route !== 'login' && $pdo) {
   <div class="brand"><span class="menu">☰</span><img src="/public/google-logo.png" alt=""/><span>Drive</span></div>
   <form class="search" method="get" action="/search"><input name="q" placeholder="ابحث في درايف" value="<?= htmlspecialchars($search) ?>"/></form>
   <div class="header-icons"><span>?</span><span>⚙</span></div>
-  <div class="profile"><img src="<?= htmlspecialchars($user['avatar'] ?: '/public/myimg.png') ?>" alt="avatar"/><span><?= htmlspecialchars($user['name']) ?></span></div>
+  <div class="profile"><img width="38" height="38" src="<?= htmlspecialchars($user['avatar'] ?: '/public/myimg.png') ?>" alt="avatar"/><span><?= htmlspecialchars($user['name']) ?></span><a class="header-logout" href="/logout">خروج</a></div>
 </header>
 
 <div class="layout">
@@ -394,10 +395,22 @@ if ($user && $route !== 'login' && $pdo) {
 <script>
 const newBtn=document.getElementById('newBtn');
 const newMenu=document.getElementById('newMenu');
-newBtn?.addEventListener('click',()=>newMenu.classList.toggle('hidden'));
-document.querySelectorAll('[data-open]').forEach(el=>el.addEventListener('click',()=>{document.getElementById(el.dataset.open).classList.remove('hidden');newMenu.classList.add('hidden');}));
+if(newBtn && newMenu){
+  newBtn.addEventListener('click',(e)=>{e.stopPropagation();newMenu.classList.toggle('hidden');});
+  document.querySelectorAll('[data-open]').forEach(el=>el.addEventListener('click',()=>{
+    const target=document.getElementById(el.dataset.open);
+    if(target) target.classList.remove('hidden');
+    newMenu.classList.add('hidden');
+  }));
+  document.addEventListener('click',(e)=>{
+    if(!newMenu.contains(e.target) && e.target!==newBtn){
+      newMenu.classList.add('hidden');
+    }
+  });
+}
 document.querySelectorAll('[data-close]').forEach(el=>el.addEventListener('click',()=>el.closest('.modal').classList.add('hidden')));
 window.addEventListener('click',(e)=>{if(e.target.classList.contains('modal')) e.target.classList.add('hidden');});
+window.addEventListener('keydown',(e)=>{if(e.key==='Escape'){document.querySelectorAll('.modal').forEach(m=>m.classList.add('hidden'));if(newMenu)newMenu.classList.add('hidden');}});
 </script>
 <?php endif; ?>
 </body>
