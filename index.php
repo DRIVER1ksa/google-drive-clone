@@ -110,7 +110,17 @@ function share_url(string $token, string $filename): string {
     if ($ext === '') $ext = 'bin';
     return '/s/' . $token . '.' . $ext;
 }
-function token(): string { return bin2hex(random_bytes(16)); }
+function token(): string { return substr(bin2hex(random_bytes(3)), 0, 5); }
+
+function generate_share_token(PDO $pdo): string {
+    for ($i = 0; $i < 20; $i++) {
+        $candidate = token();
+        $q = $pdo->prepare('SELECT 1 FROM files WHERE shared_token=? LIMIT 1');
+        $q->execute([$candidate]);
+        if (!$q->fetchColumn()) return $candidate;
+    }
+    return substr(bin2hex(random_bytes(8)), 0, 12);
+}
 
 function issue_download_gate(array $file, bool $isShared): string {
     if (!isset($_SESSION['download_gate']) || !is_array($_SESSION['download_gate'])) {
@@ -157,44 +167,57 @@ function render_download_page(array $file, string $downloadUrl, bool $isShared=f
     $date = htmlspecialchars((string)($file['created_at'] ?? ''));
     $ext = htmlspecialchars(strtolower((string)pathinfo((string)$file['filename'], PATHINFO_EXTENSION)) ?: 'file');
     $title = $name . ' | تحميل';
-    $safeUrl = htmlspecialchars($downloadUrl);
+    $downloadUrlJs = json_encode($downloadUrl, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     $downloads = (int)($file['download_count'] ?? 0);
     echo "<!doctype html><html lang='ar' dir='rtl'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{$title}</title>
     <link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css'>
     <style>
-      :root{--primary:#1976d2;--bg:#f2f5f9;--text:#1f2a37;--muted:#6b7280}*{box-sizing:border-box}
-      body{margin:0;background:var(--bg);font-family:Cairo,Tahoma,sans-serif;color:var(--text)}
-      .topbar,.footer{background:#fff;border-bottom:1px solid #e5e7eb;padding:14px 20px}.footer{border-top:1px solid #e5e7eb;border-bottom:0;text-align:center;color:var(--muted);font-size:13px}
-      .topbar .brand{display:flex;align-items:center;gap:10px;font-weight:700}.topbar i{color:var(--primary)}
-      .wrap{max-width:1080px;margin:26px auto;padding:0 12px}.box{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-      .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;box-shadow:0 6px 16px rgba(15,23,42,.05)}
-      .download-card{display:flex;flex-direction:column;justify-content:center;align-items:center;min-height:320px}
-      .status{font-weight:700;color:#2e7d32;margin-bottom:10px}.status i{margin-left:6px}
-      .btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:120px;background:var(--primary);color:#fff;font-size:30px;font-weight:700;border-radius:10px;text-decoration:none;cursor:not-allowed;opacity:.65}
-      .btn.active{cursor:pointer;opacity:1}.note{margin-top:10px;font-size:14px;color:var(--muted)}
-      .meta-title{font-size:20px;margin:0 0 14px;display:flex;align-items:center;gap:8px}
-      .meta{width:100%;border-collapse:collapse}.meta td{border:1px solid #eef2f7;padding:10px 12px}.meta td:first-child{background:#f8fafc;width:170px;font-weight:700}
-      @media(max-width:900px){.box{grid-template-columns:1fr}}
+      :root{--primary:#1e88e5;--bg:#f2f2f2;--text:#1f2937;--muted:#6b7280;--border:#dbe3ea}*{box-sizing:border-box}
+      body{margin:0;background:var(--bg);font-family:Cairo,Tahoma,sans-serif;color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+      .topbar{background:#fff;border-bottom:1px solid var(--border);padding:12px 20px}.topbar .brand{display:flex;align-items:center;gap:9px;font-weight:700}.topbar i{color:var(--primary)}
+      .wrap{max-width:1080px;margin:22px auto;padding:0 12px;width:100%;flex:1}
+      .file-name{font-size:37px;text-align:center;margin:0 0 10px;color:#30363d;word-break:break-word}
+      .file-sub{text-align:center;color:#7a8699;font-size:34px;margin-bottom:10px}
+      .blue-line{height:3px;background:var(--primary);margin-bottom:26px}
+      .box{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+      .card{background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px}
+      .download-card{display:flex;flex-direction:column;justify-content:center;align-items:center;min-height:320px;background:#f6fbef}
+      .status{font-weight:700;color:#4a7d16;margin-bottom:16px}.status i{margin-left:6px}
+      .btn{display:flex;align-items:center;justify-content:center;gap:10px;width:82%;height:120px;background:var(--primary);color:#fff;font-size:38px;font-weight:700;border-radius:8px;text-decoration:none;cursor:not-allowed;opacity:.65}
+      .btn.active{cursor:pointer;opacity:1}.note{margin-top:12px;font-size:14px;color:var(--muted)}
+      .meta-title{font-size:22px;margin:0 0 14px;display:flex;align-items:center;gap:8px;color:#d97706}
+      .meta{width:100%;border-collapse:collapse}.meta td{border:1px solid #ececec;padding:9px 11px}.meta td:first-child{background:#fafafa;width:170px;font-weight:700}
+      .footer{background:#fff;border-top:1px solid var(--border);padding:14px 20px;text-align:center;color:#6b7280;font-size:13px;margin-top:auto}
+      @media(max-width:900px){.box{grid-template-columns:1fr}.file-name{font-size:30px}.btn{width:100%;font-size:32px}}
     </style></head><body>
     <header class='topbar'><div class='brand'><i class='fa-solid fa-cloud-arrow-down'></i> Safe Drive Download</div></header>
-    <main class='wrap'><div class='box'>
-      <section class='card meta-card'><h1 class='meta-title'><i class='fa-regular fa-file-lines'></i> معلومات الملف</h1>
-      <table class='meta'>
-      <tr><td>اسم الملف</td><td>{$name}</td></tr>
-      <tr><td>قام برفعه</td><td>{$uploader}</td></tr>
-      <tr><td>نوع الملف</td><td>{$ext}</td></tr>
-      <tr><td>حجم الملف</td><td>{$size}</td></tr>
-      <tr><td>تاريخ الملف</td><td>{$date}</td></tr>
-      <tr><td>عدد مرات التنزيل</td><td>{$downloads}</td></tr>
-      </table></section>
-      <section class='card download-card'><div class='status'><i class='fa-solid fa-circle-check'></i> تم إيجاد الملف</div>
-      <a id='dlBtn' class='btn'><i class='fa-solid fa-download'></i> تحميل الملف خلال <span id='count'>8</span> ثوانٍ</a>
-      <div class='note'>" . ($isShared ? 'رابط مشاركة عام' : 'رابط خاص بالمستخدم') . "</div></section>
-    </div></main>
+    <main class='wrap'>
+      <h1 class='file-name'>{$name}</h1>
+      <div class='file-sub'>{$title}</div>
+      <div class='blue-line'></div>
+      <div class='box'>
+        <section class='card download-card'>
+          <div class='status'><i class='fa-solid fa-circle-check'></i> [ تم إيجاد الملف ]</div>
+          <a id='dlBtn' class='btn'><i class='fa-solid fa-download'></i> <span>تحميل الملف خلال <span id='count'>8</span> ثوانٍ</span></a>
+          <div class='note'>" . ($isShared ? 'رابط مشاركة عام' : 'رابط خاص بالمستخدم') . "</div>
+        </section>
+        <section class='card meta-card'>
+          <h2 class='meta-title'><i class='fa-regular fa-file-lines'></i> معلومات عن الملف</h2>
+          <table class='meta'>
+            <tr><td>قام برفعه</td><td>{$uploader}</td></tr>
+            <tr><td>نوع الملف</td><td>{$ext}</td></tr>
+            <tr><td>حجم الملف</td><td>{$size}</td></tr>
+            <tr><td>تاريخ الملف</td><td>{$date}</td></tr>
+            <tr><td>عدد التحميلات</td><td>{$downloads}</td></tr>
+          </table>
+        </section>
+      </div>
+    </main>
     <footer class='footer'>جميع الحقوق محفوظة - Safe Drive</footer>
     <script>
       let c=8;const el=document.getElementById('count');const b=document.getElementById('dlBtn');
-      const t=setInterval(()=>{c--;el.textContent=c;if(c<=0){clearInterval(t);b.classList.add('active');b.innerHTML=`<i class='fa-solid fa-download'></i> تحميل الملف الآن`;b.href='{$safeUrl}';}},1000);
+      const finalUrl={$downloadUrlJs};
+      const t=setInterval(()=>{c--;el.textContent=c;if(c<=0){clearInterval(t);b.classList.add('active');b.innerHTML=`<i class='fa-solid fa-download'></i> <span>لتحميل الملف انقر هنا</span>`;b.href=finalUrl;}},1000);
     </script></body></html>";
     exit;
 }
@@ -342,7 +365,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $q->execute([$id, $user['id']]);
             $row = $q->fetch();
             if ($row) {
-                $tokenValue = $row['shared_token'] ? null : token();
+                $tokenValue = $row['shared_token'] ? null : generate_share_token($pdo);
                 $st = $pdo->prepare('UPDATE files SET shared_token=? WHERE id=? AND user_id=?');
                 $st->execute([$tokenValue, $id, $user['id']]);
             }
