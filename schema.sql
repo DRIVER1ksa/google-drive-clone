@@ -29,3 +29,10 @@ CREATE TABLE IF NOT EXISTS files (
   INDEX idx_user_created (user_id, created_at),
   INDEX idx_user_folder (user_id, folder_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  `key` VARCHAR(100) PRIMARY KEY,
+  `value` TEXT NOT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

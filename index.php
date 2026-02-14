@@ -57,6 +57,12 @@ function ensure_schema(PDO $pdo): void {
     if (!in_array('shared_token', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN shared_token VARCHAR(64) NULL, ADD UNIQUE KEY uq_file_token (shared_token)");
     if (!in_array('download_count', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN download_count BIGINT UNSIGNED NOT NULL DEFAULT 0");
 
+    $pdo->exec("CREATE TABLE IF NOT EXISTS app_settings (
+      `key` VARCHAR(100) PRIMARY KEY,
+      `value` TEXT NOT NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
     $fcols = $pdo->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='folders'")->fetchAll(PDO::FETCH_COLUMN);
     if (!in_array('shared_token', $fcols, true)) $pdo->exec("ALTER TABLE folders ADD COLUMN shared_token VARCHAR(64) NULL, ADD UNIQUE KEY uq_folder_token (shared_token)");
 }
@@ -89,6 +95,47 @@ function require_login(): void {
         header('Location: /login');
         exit;
     }
+}
+
+function is_admin_user(array $config, ?array $user): bool {
+    if (!$user) return false;
+    $allowed = $config['admin_user_ids'] ?? [];
+    if (!is_array($allowed)) return false;
+    return in_array((string)($user['id'] ?? ''), array_map('strval', $allowed), true);
+}
+
+function require_admin(array $config): void {
+    require_login();
+    if (!is_admin_user($config, $_SESSION['user'] ?? null)) {
+        http_response_code(403);
+        exit('Forbidden');
+    }
+}
+
+function get_setting(PDO $pdo, string $key, ?string $default = null): ?string {
+    $st = $pdo->prepare('SELECT `value` FROM app_settings WHERE `key`=? LIMIT 1');
+    $st->execute([$key]);
+    $v = $st->fetchColumn();
+    return $v === false ? $default : (string)$v;
+}
+
+function set_setting(PDO $pdo, string $key, string $value): void {
+    $st = $pdo->prepare('INSERT INTO app_settings (`key`,`value`) VALUES (?,?) ON DUPLICATE KEY UPDATE `value`=VALUES(`value`)');
+    $st->execute([$key, $value]);
+}
+
+function get_allowed_extensions(PDO $pdo): ?array {
+    $raw = trim((string)get_setting($pdo, 'allowed_extensions', ''));
+    if ($raw === '' || $raw === '*') return null;
+    $items = array_values(array_filter(array_map(static fn($v)=>strtolower(trim($v)), explode(',', $raw))));
+    return $items ?: null;
+}
+
+function is_extension_allowed(PDO $pdo, string $filename): bool {
+    $allowed = get_allowed_extensions($pdo);
+    if ($allowed === null) return true;
+    $ext = strtolower((string)pathinfo($filename, PATHINFO_EXTENSION));
+    return $ext !== '' && in_array($ext, $allowed, true);
 }
 
 function format_bytes(int $bytes): string {
@@ -317,6 +364,7 @@ elseif ($segments[0] === 'starred') $route = 'starred';
 elseif ($segments[0] === 'trash') $route = 'trash';
 elseif ($segments[0] === 'search') $route = 'search';
 elseif ($segments[0] === 'folders' && isset($segments[1])) { $route = 'folder'; $currentFolderId = (int)$segments[1]; }
+elseif ($segments[0] === 'admin') $route = 'admin';
 
 $flash = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -333,6 +381,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$pdo) throw new RuntimeException('قاعدة البيانات غير متاحة حالياً.');
         $user = $_SESSION['user'];
         $redirect = $_POST['redirect'] ?? '/drive';
+
+        if (str_starts_with($action, 'admin_')) {
+            require_admin($config);
+
+            if ($action === 'admin_set_extensions') {
+                $extRaw = trim((string)($_POST['extensions'] ?? '*'));
+                $clean = $extRaw === '*' ? '*' : implode(',', array_values(array_unique(array_filter(array_map(static fn($x)=>strtolower(trim($x, " .\t\n\r\0\x0B")), explode(',', $extRaw))))));
+                if ($clean === '') $clean = '*';
+                set_setting($pdo, 'allowed_extensions', $clean);
+                $redirect = '/admin';
+            }
+
+            if ($action === 'admin_bulk_files') {
+                $ids = $_POST['file_ids'] ?? [];
+                if (!is_array($ids) || !$ids) throw new RuntimeException('اختر ملفات أولاً.');
+                $ids = array_values(array_filter(array_map('intval', $ids), static fn($v)=>$v>0));
+                if (!$ids) throw new RuntimeException('اختر ملفات صحيحة.');
+                $op = (string)($_POST['bulk_op'] ?? '');
+                $pl = implode(',', array_fill(0, count($ids), '?'));
+
+                if ($op === 'delete') {
+                    $q = $pdo->prepare("SELECT relative_path FROM files WHERE id IN ($pl)");
+                    $q->execute($ids);
+                    foreach ($q->fetchAll() as $r) { $abs = __DIR__ . '/' . $r['relative_path']; if (is_file($abs)) @unlink($abs); }
+                    $d = $pdo->prepare("DELETE FROM files WHERE id IN ($pl)");
+                    $d->execute($ids);
+                } elseif ($op === 'trash') {
+                    $u = $pdo->prepare("UPDATE files SET is_trashed=1 WHERE id IN ($pl)");
+                    $u->execute($ids);
+                } elseif ($op === 'unshare') {
+                    $u = $pdo->prepare("UPDATE files SET shared_token=NULL WHERE id IN ($pl)");
+                    $u->execute($ids);
+                } elseif ($op === 'move') {
+                    $targetRaw = $_POST['target_folder_id'] ?? '';
+                    $target = ($targetRaw === '' ? null : (int)$targetRaw);
+                    $u = $pdo->prepare("UPDATE files SET folder_id=? WHERE id IN ($pl)");
+                    $u->execute(array_merge([$target], $ids));
+                } else {
+                    throw new RuntimeException('عملية غير مدعومة.');
+                }
+                $redirect = '/admin';
+            }
+
+            if ($action === 'admin_purge_user') {
+                $uid = trim((string)($_POST['target_user_id'] ?? ''));
+                if ($uid === '') throw new RuntimeException('اختر مستخدم أولاً.');
+                $q = $pdo->prepare('SELECT relative_path FROM files WHERE user_id=?');
+                $q->execute([$uid]);
+                foreach ($q->fetchAll() as $r) { $abs = __DIR__ . '/' . $r['relative_path']; if (is_file($abs)) @unlink($abs); }
+                $pdo->prepare('DELETE FROM files WHERE user_id=?')->execute([$uid]);
+                $pdo->prepare('DELETE FROM folders WHERE user_id=?')->execute([$uid]);
+                $redirect = '/admin';
+            }
+        }
 
         if ($action === 'create_folder') {
             $name = trim((string)($_POST['folder_name'] ?? ''));
@@ -380,6 +482,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ((int)$one['size'] > (int)$config['max_upload_size']) throw new RuntimeException('الملف أكبر من 5 جيجابايت.');
                 if (($currentStorage + (int)$one['size']) > USER_STORAGE_LIMIT) throw new RuntimeException('تم تجاوز سعة المستخدم 1 تيرابايت.');
                 $name = $displayName ?: (string)$one['name'];
+                if (!is_extension_allowed($pdo, $name)) throw new RuntimeException('امتداد الملف غير مسموح به من الإدارة.');
                 $ext = pathinfo($name, PATHINFO_EXTENSION);
                 $stored = bin2hex(random_bytes(20)) . ($ext ? '.' . $ext : '');
                 $dest = $config['upload_dir'] . '/' . $stored;
@@ -496,6 +599,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $user = $_SESSION['user'] ?? null;
 if ($route !== 'login') require_login();
+if ($route === 'admin') require_admin($config);
 
 $files = [];
 $folders = [];
@@ -503,8 +607,27 @@ $allFolders = [];
 $storage = 0;
 $search = trim((string)($_GET['q'] ?? ''));
 $pageTitle = 'My Drive';
+$adminStats = [];
+$adminFiles = [];
+$adminUsers = [];
+$adminFolders = [];
+$allowedExtDisplay = '*';
 
-if ($user && $route !== 'login' && $pdo) {
+if ($user && $route === 'admin' && $pdo) {
+    $adminStats = [
+        'files' => (int)$pdo->query('SELECT COUNT(*) FROM files')->fetchColumn(),
+        'users' => (int)$pdo->query('SELECT COUNT(DISTINCT user_id) FROM files')->fetchColumn(),
+        'shared' => (int)$pdo->query('SELECT COUNT(*) FROM files WHERE shared_token IS NOT NULL')->fetchColumn(),
+        'size' => (int)$pdo->query('SELECT COALESCE(SUM(size_bytes),0) FROM files')->fetchColumn(),
+    ];
+    $adminFiles = $pdo->query('SELECT id,user_id,user_name,filename,mime_type,size_bytes,folder_id,shared_token,is_trashed,created_at FROM files ORDER BY created_at DESC LIMIT 800')->fetchAll();
+    $adminUsers = $pdo->query('SELECT user_id, MIN(user_name) user_name, COUNT(*) files_count, COALESCE(SUM(size_bytes),0) total_size FROM files GROUP BY user_id ORDER BY files_count DESC LIMIT 500')->fetchAll();
+    $adminFolders = $pdo->query('SELECT id,name,user_id FROM folders ORDER BY id DESC LIMIT 1000')->fetchAll();
+    $allowedExtDisplay = get_setting($pdo, 'allowed_extensions', '*') ?: '*';
+    $pageTitle = 'لوحة تحكم الإدارة';
+}
+
+if ($user && $route !== 'login' && $route !== 'admin' && $pdo) {
     $storage = get_user_storage($pdo, $user['id']);
 
     $all = $pdo->prepare('SELECT id,name,parent_id FROM folders WHERE user_id=? ORDER BY name');
@@ -568,6 +691,97 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
   </section>
   <img src="/public/login.gif" class="hero" alt="login" />
 </main>
+<?php elseif ($route === 'admin'): ?>
+<header class="topbar">
+  <div class="brand"><span class="menu">🛡</span><img src="/public/google-logo.png" alt=""/><span>Admin Panel</span></div>
+  <div class="profile"><img width="38" height="38" src="<?= htmlspecialchars($user['avatar'] ?: '/public/myimg.png') ?>" alt="avatar"/><span><?= htmlspecialchars($user['name']) ?></span><a class="header-logout" href="/logout">خروج</a></div>
+</header>
+<main style="padding:16px;max-width:1300px;margin:0 auto">
+  <?php if ($flash): ?><div class="flash <?= $flash['type'] ?>" style="margin-bottom:12px"><?= htmlspecialchars($flash['msg']) ?></div><?php endif; ?>
+  <section style="display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:10px;margin-bottom:14px">
+    <div class="storage-card"><strong><?= (int)$adminStats['files'] ?></strong><div>كل الملفات</div></div>
+    <div class="storage-card"><strong><?= (int)$adminStats['users'] ?></strong><div>كل الحسابات</div></div>
+    <div class="storage-card"><strong><?= (int)$adminStats['shared'] ?></strong><div>ملفات مشاركة</div></div>
+    <div class="storage-card"><strong><?= format_bytes((int)$adminStats['size']) ?></strong><div>إجمالي المساحة</div></div>
+  </section>
+
+  <section class="storage-card" style="margin-bottom:14px">
+    <h3>التحكم بامتدادات الملفات المسموحة</h3>
+    <form method="post" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input type="hidden" name="action" value="admin_set_extensions">
+      <input type="hidden" name="redirect" value="/admin">
+      <input name="extensions" value="<?= htmlspecialchars($allowedExtDisplay) ?>" style="min-width:380px;padding:8px" placeholder="مثال: zip,rar,pdf أو * لكل الامتدادات">
+      <button type="submit">حفظ</button>
+      <small>القيمة الحالية: <b><?= htmlspecialchars($allowedExtDisplay) ?></b></small>
+    </form>
+  </section>
+
+  <section class="storage-card" style="margin-bottom:14px">
+    <h3>إدارة حسابات المستخدمين (مسح جميع الملفات)</h3>
+    <form method="post" onsubmit="return confirm('تأكيد حذف جميع ملفات ومجلدات هذا المستخدم؟');" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input type="hidden" name="action" value="admin_purge_user"><input type="hidden" name="redirect" value="/admin">
+      <select name="target_user_id" required>
+        <option value="">اختر المستخدم</option>
+        <?php foreach($adminUsers as $au): ?>
+        <option value="<?= htmlspecialchars($au['user_id']) ?>"><?= htmlspecialchars(($au['user_name'] ?: $au['user_id']) . ' | ملفات: ' . $au['files_count']) ?></option>
+        <?php endforeach; ?>
+      </select>
+      <button type="submit" style="background:#b91c1c;color:#fff">مسح كل ملفات المستخدم</button>
+    </form>
+  </section>
+
+  <section class="storage-card" style="margin-bottom:14px;overflow:auto">
+    <h3>استعراض كامل الملفات + عمليات جماعية</h3>
+    <form method="post" id="adminBulkForm">
+      <input type="hidden" name="action" value="admin_bulk_files"><input type="hidden" name="redirect" value="/admin">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+        <select name="bulk_op" id="bulkOp" required>
+          <option value="">اختر العملية</option>
+          <option value="trash">نقل للسلة</option>
+          <option value="delete">حذف نهائي</option>
+          <option value="move">نقل إلى مجلد</option>
+          <option value="unshare">إلغاء المشاركة</option>
+        </select>
+        <select name="target_folder_id" id="targetFolderSelect">
+          <option value="">الجذر (بدون مجلد)</option>
+          <?php foreach($adminFolders as $fd): ?>
+          <option value="<?= (int)$fd['id'] ?>">#<?= (int)$fd['id'] ?> - <?= htmlspecialchars($fd['name']) ?> (<?= htmlspecialchars($fd['user_id']) ?>)</option>
+          <?php endforeach; ?>
+        </select>
+        <button type="submit">تنفيذ</button>
+        <button type="button" onclick="document.querySelectorAll('.admin-file-check').forEach(c=>c.checked=true)">تحديد الكل</button>
+        <button type="button" onclick="document.querySelectorAll('.admin-file-check').forEach(c=>c.checked=false)">إلغاء الكل</button>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#f3f4f6"><th></th><th>ID</th><th>المستخدم</th><th>الملف</th><th>الامتداد</th><th>الحجم</th><th>مجلد</th><th>مشاركة</th><th>الحالة</th><th>التاريخ</th></tr></thead>
+        <tbody>
+        <?php foreach($adminFiles as $af): $ex = strtolower((string)pathinfo((string)$af['filename'], PATHINFO_EXTENSION)); ?>
+          <tr>
+            <td><input class="admin-file-check" type="checkbox" name="file_ids[]" value="<?= (int)$af['id'] ?>"></td>
+            <td><?= (int)$af['id'] ?></td>
+            <td><?= htmlspecialchars($af['user_name'] ?: $af['user_id']) ?><br><small><?= htmlspecialchars($af['user_id']) ?></small></td>
+            <td><?= htmlspecialchars($af['filename']) ?></td>
+            <td><?= htmlspecialchars($ex ?: '-') ?></td>
+            <td><?= format_bytes((int)$af['size_bytes']) ?></td>
+            <td><?= $af['folder_id'] === null ? '-' : (int)$af['folder_id'] ?></td>
+            <td><?= $af['shared_token'] ? '✅' : '—' ?></td>
+            <td><?= (int)$af['is_trashed'] ? '🗑' : 'نشط' ?></td>
+            <td><?= htmlspecialchars((string)$af['created_at']) ?></td>
+          </tr>
+        <?php endforeach; ?>
+        </tbody>
+      </table>
+    </form>
+  </section>
+</main>
+<script>
+const bulkOp=document.getElementById('bulkOp');
+const folderSel=document.getElementById('targetFolderSelect');
+if(bulkOp&&folderSel){
+  const sync=()=>{folderSel.style.display=(bulkOp.value==='move')?'inline-block':'none';};
+  bulkOp.addEventListener('change',sync);sync();
+}
+</script>
 <?php else: ?>
 <header class="topbar">
   <div class="brand"><span class="menu">☰</span><img src="/public/google-logo.png" alt=""/><span>Drive</span></div>

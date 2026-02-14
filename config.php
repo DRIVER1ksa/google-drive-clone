@@ -13,4 +13,5 @@ return [
   ],
   'upload_dir' => __DIR__ . '/uploads',
   'max_upload_size' => 5 * 1024 * 1024 * 1024,
+  'admin_user_ids' => array_values(array_filter(array_map('trim', explode(',', getenv('ADMIN_USER_IDS') ?: '1')))),
 ];
