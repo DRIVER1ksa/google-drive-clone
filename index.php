@@ -103,8 +103,52 @@ function get_user_storage(PDO $pdo, string $userId): int {
 }
 
 function file_url(array $f): string { return '/d/' . (int)$f['id'] . '/' . rawurlencode((string)$f['filename']); }
-function share_url(string $token, string $filename): string { return '/s/' . $token . '/' . rawurlencode($filename); }
-function token(): string { return substr(strtr(base64_encode(random_bytes(9)), '+/', 'AZ'), 0, 12); }
+function share_url(string $token, string $filename): string {
+    $ext = strtolower((string)pathinfo($filename, PATHINFO_EXTENSION));
+    if ($ext === '') $ext = 'bin';
+    return '/s/' . $token . '.' . $ext;
+}
+function token(): string { return bin2hex(random_bytes(5)); }
+
+function should_show_download_page(string $filename, string $mime): bool {
+    $ext = strtolower((string)pathinfo($filename, PATHINFO_EXTENSION));
+    $blocked = ['zip','rar','7z','iso','pkg','tar','gz','bz2','xz','img'];
+    if (in_array($ext, $blocked, true)) return true;
+    if (str_starts_with($mime, 'video/')) return false;
+    if (str_starts_with($mime, 'audio/')) return false;
+    if (str_starts_with($mime, 'image/')) return false;
+    if ($mime === 'application/pdf' || $mime === 'text/plain') return false;
+    return in_array($ext, ['exe','msi','dmg','apk','bin'], true);
+}
+
+function render_download_page(array $file, string $downloadUrl, bool $isShared=false): void {
+    $name = htmlspecialchars((string)$file['filename']);
+    $uploader = htmlspecialchars((string)($file['user_name'] ?? 'unknown'));
+    $size = format_bytes((int)($file['size_bytes'] ?? 0));
+    $date = htmlspecialchars((string)($file['created_at'] ?? ''));
+    $ext = htmlspecialchars(strtolower((string)pathinfo((string)$file['filename'], PATHINFO_EXTENSION)) ?: 'file');
+    $title = $name . ' | تحميل';
+    $safeUrl = htmlspecialchars($downloadUrl);
+    echo "<!doctype html><html lang='ar' dir='rtl'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{$title}</title><style>
+      body{margin:0;background:#f0f0f0;font-family:Cairo,sans-serif;color:#222}.wrap{max-width:1100px;margin:30px auto;padding:0 12px}
+      .h{font-size:30px;text-align:center;margin:0 0 10px}.sub{text-align:center;color:#666;margin-bottom:14px}
+      .line{height:2px;background:#2196f3;margin:10px 0 24px}.box{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+      .card{background:#fff;border:1px solid #ddd;border-radius:8px;padding:14px}.ok{font-weight:700;color:#4a7d16;text-align:center;margin:8px 0}
+      .btn{display:flex;align-items:center;justify-content:center;height:110px;background:#2196f3;color:#fff;font-size:34px;font-weight:700;border-radius:8px;cursor:not-allowed;opacity:.65}
+      .btn.active{cursor:pointer;opacity:1}.meta{width:100%;border-collapse:collapse}.meta td{border:1px solid #ececec;padding:8px}.meta td:first-child{background:#f9f9f9;width:160px;font-weight:700}
+      .note{margin-top:10px;font-size:13px;color:#777;text-align:center} @media(max-width:900px){.box{grid-template-columns:1fr}}
+    </style></head><body><div class='wrap'>
+      <h1 class='h'>{$name}</h1><div class='sub'>{$title}</div><div class='line'></div>
+      <div class='box'><div class='card'><div class='ok'>[ تم إيجاد الملف ]</div>
+      <a id='dlBtn' class='btn'>تحميل الملف خلال <span id='count'>8</span> ثوانٍ</a>
+      <div class='note'>" . ($isShared ? 'رابط مشاركة عام' : 'رابط خاص بالمستخدم') . "</div></div>
+      <div class='card'><table class='meta'><tr><td>قام برفعه</td><td>{$uploader}</td></tr><tr><td>نوع الملف</td><td>{$ext}</td></tr><tr><td>حجم الملف</td><td>{$size}</td></tr><tr><td>تاريخ الملف</td><td>{$date}</td></tr><tr><td>رابط مباشر</td><td><a href='{$safeUrl}'>{$safeUrl}</a></td></tr></table></div></div>
+    </div><script>
+      let c=8;const el=document.getElementById('count');const b=document.getElementById('dlBtn');
+      const t=setInterval(()=>{c--;el.textContent=c;if(c<=0){clearInterval(t);b.classList.add('active');b.textContent='تحميل الملف الآن';b.href='{$safeUrl}';}},1000);
+    </script></body></html>";
+    exit;
+}
 
 $pdo = null;
 $dbError = null;
@@ -122,15 +166,28 @@ $cssVersion = @filemtime(__DIR__ . '/public/assets/style.css') ?: time();
 
 if (!empty($segments[0]) && $segments[0] === 's' && isset($segments[1])) {
     if (!$pdo) { http_response_code(500); exit('DB error'); }
+    $part = $segments[1];
+    $token = $part;
+    if (str_contains($part, '.')) {
+        $token = explode('.', $part, 2)[0];
+    }
     $q = $pdo->prepare('SELECT * FROM files WHERE shared_token=? LIMIT 1');
-    $q->execute([$segments[1]]);
+    $q->execute([$token]);
     $file = $q->fetch();
     if (!$file) { http_response_code(404); exit('Shared file not found'); }
+
+    $downloadFlag = isset($_GET['download']) && $_GET['download'] === '1';
+    $shareUrl = share_url((string)$file['shared_token'], (string)$file['filename']);
+    if (!$downloadFlag && should_show_download_page((string)$file['filename'], (string)$file['mime_type'])) {
+        render_download_page($file, $shareUrl . '?download=1', true);
+    }
+
     $abs = __DIR__ . '/' . $file['relative_path'];
     if (!is_file($abs)) { http_response_code(404); exit('Missing file'); }
     header('Content-Type: ' . ($file['mime_type'] ?: 'application/octet-stream'));
     header('Content-Length: ' . filesize($abs));
-    header("Content-Disposition: inline; filename*=UTF-8''" . rawurlencode($file['filename']));
+    $disp = $downloadFlag ? 'attachment' : 'inline';
+    header("Content-Disposition: {$disp}; filename*=UTF-8''" . rawurlencode($file['filename']));
     readfile($abs);
     exit;
 }
@@ -143,11 +200,19 @@ if (!empty($segments[0]) && $segments[0] === 'd' && isset($segments[1])) {
     $q->execute([$id, $_SESSION['user']['id']]);
     $file = $q->fetch();
     if (!$file) { http_response_code(404); exit('Not found'); }
+
+    $downloadFlag = isset($_GET['download']) && $_GET['download'] === '1';
+    $privateUrl = file_url($file);
+    if (!$downloadFlag && should_show_download_page((string)$file['filename'], (string)$file['mime_type'])) {
+        render_download_page($file, $privateUrl . '?download=1', false);
+    }
+
     $abs = __DIR__ . '/' . $file['relative_path'];
     if (!is_file($abs)) { http_response_code(404); exit('Missing'); }
     header('Content-Type: ' . ($file['mime_type'] ?: 'application/octet-stream'));
     header('Content-Length: ' . filesize($abs));
-    header("Content-Disposition: inline; filename*=UTF-8''" . rawurlencode($file['filename']));
+    $disp = $downloadFlag ? 'attachment' : 'inline';
+    header("Content-Disposition: {$disp}; filename*=UTF-8''" . rawurlencode($file['filename']));
     readfile($abs);
     exit;
 }
