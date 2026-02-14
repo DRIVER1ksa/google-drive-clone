@@ -44,6 +44,7 @@ function ensure_schema(PDO $pdo): void {
       shared_token VARCHAR(64) NULL,
       is_starred TINYINT(1) NOT NULL DEFAULT 0,
       is_trashed TINYINT(1) NOT NULL DEFAULT 0,
+      download_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uq_file_token (shared_token),
       INDEX idx_user_status (user_id, is_trashed, is_starred),
@@ -54,6 +55,7 @@ function ensure_schema(PDO $pdo): void {
     $cols = $pdo->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='files'")->fetchAll(PDO::FETCH_COLUMN);
     if (!in_array('folder_id', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN folder_id BIGINT UNSIGNED NULL, ADD INDEX idx_user_folder (user_id, folder_id)");
     if (!in_array('shared_token', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN shared_token VARCHAR(64) NULL, ADD UNIQUE KEY uq_file_token (shared_token)");
+    if (!in_array('download_count', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN download_count BIGINT UNSIGNED NOT NULL DEFAULT 0");
 
     $fcols = $pdo->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='folders'")->fetchAll(PDO::FETCH_COLUMN);
     if (!in_array('shared_token', $fcols, true)) $pdo->exec("ALTER TABLE folders ADD COLUMN shared_token VARCHAR(64) NULL, ADD UNIQUE KEY uq_folder_token (shared_token)");
@@ -110,6 +112,33 @@ function share_url(string $token, string $filename): string {
 }
 function token(): string { return bin2hex(random_bytes(16)); }
 
+function issue_download_gate(array $file, bool $isShared): string {
+    if (!isset($_SESSION['download_gate']) || !is_array($_SESSION['download_gate'])) {
+        $_SESSION['download_gate'] = [];
+    }
+    $gate = bin2hex(random_bytes(24));
+    $_SESSION['download_gate'][$gate] = [
+        'file_id' => (int)$file['id'],
+        'is_shared' => $isShared ? 1 : 0,
+        'expires_at' => time() + 300,
+    ];
+    return $gate;
+}
+
+function validate_download_gate(array $file, bool $isShared, ?string $gate): bool {
+    if (!$gate || empty($_SESSION['download_gate'][$gate])) return false;
+    $meta = $_SESSION['download_gate'][$gate];
+    unset($_SESSION['download_gate'][$gate]);
+    return (int)($meta['file_id'] ?? 0) === (int)$file['id']
+        && (int)($meta['is_shared'] ?? -1) === ($isShared ? 1 : 0)
+        && (int)($meta['expires_at'] ?? 0) >= time();
+}
+
+function increment_download_count(PDO $pdo, int $fileId): void {
+    $st = $pdo->prepare('UPDATE files SET download_count = COALESCE(download_count,0) + 1 WHERE id=?');
+    $st->execute([$fileId]);
+}
+
 function should_show_download_page(string $filename, string $mime): bool {
     $ext = strtolower((string)pathinfo($filename, PATHINFO_EXTENSION));
     $blocked = ['zip','rar','7z','iso','pkg','tar','gz','bz2','xz','img'];
@@ -129,23 +158,43 @@ function render_download_page(array $file, string $downloadUrl, bool $isShared=f
     $ext = htmlspecialchars(strtolower((string)pathinfo((string)$file['filename'], PATHINFO_EXTENSION)) ?: 'file');
     $title = $name . ' | تحميل';
     $safeUrl = htmlspecialchars($downloadUrl);
-    echo "<!doctype html><html lang='ar' dir='rtl'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{$title}</title><style>
-      body{margin:0;background:#f0f0f0;font-family:Cairo,sans-serif;color:#222}.wrap{max-width:1100px;margin:30px auto;padding:0 12px}
-      .h{font-size:30px;text-align:center;margin:0 0 10px}.sub{text-align:center;color:#666;margin-bottom:14px}
-      .line{height:2px;background:#2196f3;margin:10px 0 24px}.box{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-      .card{background:#fff;border:1px solid #ddd;border-radius:8px;padding:14px}.ok{font-weight:700;color:#4a7d16;text-align:center;margin:8px 0}
-      .btn{display:flex;align-items:center;justify-content:center;height:110px;background:#2196f3;color:#fff;font-size:34px;font-weight:700;border-radius:8px;cursor:not-allowed;opacity:.65}
-      .btn.active{cursor:pointer;opacity:1}.meta{width:100%;border-collapse:collapse}.meta td{border:1px solid #ececec;padding:8px}.meta td:first-child{background:#f9f9f9;width:160px;font-weight:700}
-      .note{margin-top:10px;font-size:13px;color:#777;text-align:center} @media(max-width:900px){.box{grid-template-columns:1fr}}
-    </style></head><body><div class='wrap'>
-      <h1 class='h'>{$name}</h1><div class='sub'>{$title}</div><div class='line'></div>
-      <div class='box'><div class='card'><div class='ok'>[ تم إيجاد الملف ]</div>
-      <a id='dlBtn' class='btn'>تحميل الملف خلال <span id='count'>8</span> ثوانٍ</a>
-      <div class='note'>" . ($isShared ? 'رابط مشاركة عام' : 'رابط خاص بالمستخدم') . "</div></div>
-      <div class='card'><table class='meta'><tr><td>قام برفعه</td><td>{$uploader}</td></tr><tr><td>نوع الملف</td><td>{$ext}</td></tr><tr><td>حجم الملف</td><td>{$size}</td></tr><tr><td>تاريخ الملف</td><td>{$date}</td></tr><tr><td>رابط مباشر</td><td><a href='{$safeUrl}'>{$safeUrl}</a></td></tr></table></div></div>
-    </div><script>
+    $downloads = (int)($file['download_count'] ?? 0);
+    echo "<!doctype html><html lang='ar' dir='rtl'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{$title}</title>
+    <link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css'>
+    <style>
+      :root{--primary:#1976d2;--bg:#f2f5f9;--text:#1f2a37;--muted:#6b7280}*{box-sizing:border-box}
+      body{margin:0;background:var(--bg);font-family:Cairo,Tahoma,sans-serif;color:var(--text)}
+      .topbar,.footer{background:#fff;border-bottom:1px solid #e5e7eb;padding:14px 20px}.footer{border-top:1px solid #e5e7eb;border-bottom:0;text-align:center;color:var(--muted);font-size:13px}
+      .topbar .brand{display:flex;align-items:center;gap:10px;font-weight:700}.topbar i{color:var(--primary)}
+      .wrap{max-width:1080px;margin:26px auto;padding:0 12px}.box{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+      .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;box-shadow:0 6px 16px rgba(15,23,42,.05)}
+      .download-card{display:flex;flex-direction:column;justify-content:center;align-items:center;min-height:320px}
+      .status{font-weight:700;color:#2e7d32;margin-bottom:10px}.status i{margin-left:6px}
+      .btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:120px;background:var(--primary);color:#fff;font-size:30px;font-weight:700;border-radius:10px;text-decoration:none;cursor:not-allowed;opacity:.65}
+      .btn.active{cursor:pointer;opacity:1}.note{margin-top:10px;font-size:14px;color:var(--muted)}
+      .meta-title{font-size:20px;margin:0 0 14px;display:flex;align-items:center;gap:8px}
+      .meta{width:100%;border-collapse:collapse}.meta td{border:1px solid #eef2f7;padding:10px 12px}.meta td:first-child{background:#f8fafc;width:170px;font-weight:700}
+      @media(max-width:900px){.box{grid-template-columns:1fr}}
+    </style></head><body>
+    <header class='topbar'><div class='brand'><i class='fa-solid fa-cloud-arrow-down'></i> Safe Drive Download</div></header>
+    <main class='wrap'><div class='box'>
+      <section class='card meta-card'><h1 class='meta-title'><i class='fa-regular fa-file-lines'></i> معلومات الملف</h1>
+      <table class='meta'>
+      <tr><td>اسم الملف</td><td>{$name}</td></tr>
+      <tr><td>قام برفعه</td><td>{$uploader}</td></tr>
+      <tr><td>نوع الملف</td><td>{$ext}</td></tr>
+      <tr><td>حجم الملف</td><td>{$size}</td></tr>
+      <tr><td>تاريخ الملف</td><td>{$date}</td></tr>
+      <tr><td>عدد مرات التنزيل</td><td>{$downloads}</td></tr>
+      </table></section>
+      <section class='card download-card'><div class='status'><i class='fa-solid fa-circle-check'></i> تم إيجاد الملف</div>
+      <a id='dlBtn' class='btn'><i class='fa-solid fa-download'></i> تحميل الملف خلال <span id='count'>8</span> ثوانٍ</a>
+      <div class='note'>" . ($isShared ? 'رابط مشاركة عام' : 'رابط خاص بالمستخدم') . "</div></section>
+    </div></main>
+    <footer class='footer'>جميع الحقوق محفوظة - Safe Drive</footer>
+    <script>
       let c=8;const el=document.getElementById('count');const b=document.getElementById('dlBtn');
-      const t=setInterval(()=>{c--;el.textContent=c;if(c<=0){clearInterval(t);b.classList.add('active');b.textContent='تحميل الملف الآن';b.href='{$safeUrl}';}},1000);
+      const t=setInterval(()=>{c--;el.textContent=c;if(c<=0){clearInterval(t);b.classList.add('active');b.innerHTML=`<i class='fa-solid fa-download'></i> تحميل الملف الآن`;b.href='{$safeUrl}';}},1000);
     </script></body></html>";
     exit;
 }
@@ -177,13 +226,19 @@ if (!empty($segments[0]) && $segments[0] === 's' && isset($segments[1])) {
     if (!$file) { http_response_code(404); exit('Shared file not found'); }
 
     $downloadFlag = isset($_GET['download']) && $_GET['download'] === '1';
+    $gate = $_GET['gate'] ?? null;
     $shareUrl = share_url((string)$file['shared_token'], (string)$file['filename']);
-    if (!$downloadFlag && should_show_download_page((string)$file['filename'], (string)$file['mime_type'])) {
-        render_download_page($file, $shareUrl . '?download=1', true);
+    $requiresGate = should_show_download_page((string)$file['filename'], (string)$file['mime_type']);
+    if ($requiresGate) {
+        if (!$downloadFlag || !validate_download_gate($file, true, is_string($gate) ? $gate : null)) {
+            $newGate = issue_download_gate($file, true);
+            render_download_page($file, $shareUrl . '?download=1&gate=' . rawurlencode($newGate), true);
+        }
     }
 
     $abs = __DIR__ . '/' . $file['relative_path'];
     if (!is_file($abs)) { http_response_code(404); exit('Missing file'); }
+    increment_download_count($pdo, (int)$file['id']);
     header('Content-Type: ' . ($file['mime_type'] ?: 'application/octet-stream'));
     header('Content-Length: ' . filesize($abs));
     $disp = $downloadFlag ? 'attachment' : 'inline';
@@ -202,13 +257,19 @@ if (!empty($segments[0]) && $segments[0] === 'd' && isset($segments[1])) {
     if (!$file) { http_response_code(404); exit('Not found'); }
 
     $downloadFlag = isset($_GET['download']) && $_GET['download'] === '1';
+    $gate = $_GET['gate'] ?? null;
     $privateUrl = file_url($file);
-    if (!$downloadFlag && should_show_download_page((string)$file['filename'], (string)$file['mime_type'])) {
-        render_download_page($file, $privateUrl . '?download=1', false);
+    $requiresGate = should_show_download_page((string)$file['filename'], (string)$file['mime_type']);
+    if ($requiresGate) {
+        if (!$downloadFlag || !validate_download_gate($file, false, is_string($gate) ? $gate : null)) {
+            $newGate = issue_download_gate($file, false);
+            render_download_page($file, $privateUrl . '?download=1&gate=' . rawurlencode($newGate), false);
+        }
     }
 
     $abs = __DIR__ . '/' . $file['relative_path'];
     if (!is_file($abs)) { http_response_code(404); exit('Missing'); }
+    increment_download_count($pdo, (int)$file['id']);
     header('Content-Type: ' . ($file['mime_type'] ?: 'application/octet-stream'));
     header('Content-Length: ' . filesize($abs));
     $disp = $downloadFlag ? 'attachment' : 'inline';

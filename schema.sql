@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS files (
   shared_token VARCHAR(64) NULL,
   is_starred TINYINT(1) NOT NULL DEFAULT 0,
   is_trashed TINYINT(1) NOT NULL DEFAULT 0,
+  download_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_file_token (shared_token),
   INDEX idx_user_status (user_id, is_trashed, is_starred),
