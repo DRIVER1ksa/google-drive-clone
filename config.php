@@ -12,5 +12,5 @@ return [
     'api_key' => getenv('XF_API_KEY') ?: 'C9dRzxibqXuQ61RYQUJwzKEh6VkjY9PR',
   ],
   'upload_dir' => __DIR__ . '/uploads',
-  'max_upload_size' => 50 * 1024 * 1024,
+  'max_upload_size' => 5 * 1024 * 1024 * 1024,
 ];

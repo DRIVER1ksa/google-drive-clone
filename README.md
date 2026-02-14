@@ -10,41 +10,25 @@
 - `/trash`
 - `/search?q=...`
 - `/folders/{id}`
-- `/d/{id}/{filename}`
+- `/d/{id}/{filename}` (ملف خاص بالمستخدم)
+- `/s/{token}` (رابط مشاركة عام)
 
 ## الميزات
-- واجهة RTL عربية بتخطيط قريب من المشروع الأصلي.
-- زر **جديد** واحد مع قائمة (رفع ملف / إنشاء مجلد) ونوافذ منبثقة.
-- إنشاء مجلدات + نقل الملفات بينها.
-- صور مصغرة للصور داخل القائمة وبطاقات المجلدات.
-- اسم المستخدم وصورته من XenForo بعد تسجيل الدخول.
+- واجهة RTL عربية بتخطيط قريب من Google Drive.
+- زر **+ جديد** مع قائمة: (تحميل ملف / تحميل مجلد / مجلد جديد).
+- نوافذ منبثقة (Modal) لرفع الملفات والمجلدات وإنشاء المجلدات.
+- شريط تقدم رفع + نسبة الرفع أثناء التحميل.
+- قائمة يمين (Right Click) للملفات/المجلدات: إعادة تسمية، نقل، حذف، مشاركة، نسخ رابط المشاركة.
+- سعة كل مستخدم: **1 TB**.
+- الحد الأقصى للملف الواحد: **5 GB**.
+- كارت تخزين جانبي مشابه Google Drive.
 
 ## الإعداد السريع
 1. استورد `schema.sql`.
 2. عدّل `config.php`.
 3. اجعل `uploads/` قابلًا للكتابة.
 4. ضع إعداد Nginx من `nginx.conf.example`.
+5. تأكد أن PHP (`upload_max_filesize`, `post_max_size`) تسمح بـ 5GB أو أعلى.
 
-
-## إصلاح 404 لروابط الملفات `/d/.../*.png` على CloudPanel/Nginx
-إذا كان لديك location للملفات الثابتة مثل:
-`location ~* \.(css|js|png|...)$`
-فهذا قد يلتقط رابط `/d/1/file.png` ويُرجع 404.
-
-الحل: أضف هذا **قبل** location الملفات الثابتة في server 80/443:
-```nginx
-location ^~ /d/ {
-    {{varnish_proxy_pass}}
-    proxy_set_header Host $http_host;
-    proxy_set_header X-Forwarded-Host $http_host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-}
-```
-
-وفي server الداخلي (8080) اجعل:
-```nginx
-location / {
-    try_files $uri $uri/ /index.php?$query_string;
-}
-```
+## إصلاح 404 لروابط `/d/...` على CloudPanel/Nginx
+ضع `location ^~ /d/` قبل location الملفات الثابتة regex.
