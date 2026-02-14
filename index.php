@@ -103,8 +103,8 @@ function get_user_storage(PDO $pdo, string $userId): int {
 }
 
 function file_url(array $f): string { return '/d/' . (int)$f['id'] . '/' . rawurlencode((string)$f['filename']); }
-function share_url(string $token): string { return '/s/' . $token; }
-function token(): string { return bin2hex(random_bytes(16)); }
+function share_url(string $token, string $filename): string { return '/s/' . $token . '/' . rawurlencode($filename); }
+function token(): string { return substr(strtr(base64_encode(random_bytes(9)), '+/', 'AZ'), 0, 12); }
 
 $pdo = null;
 $dbError = null;
@@ -461,7 +461,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
     <?php if ($dbError): ?><div class="flash error">خطأ قاعدة البيانات: <?= htmlspecialchars($dbError) ?></div><?php endif; ?>
     <?php if ($flash): ?><div class="flash <?= $flash['type'] ?>"><?= htmlspecialchars($flash['msg']) ?></div><?php endif; ?>
 
-    <div id="uploadProgress" class="progress hidden"><div id="uploadProgressBar"></div><p id="uploadProgressText">0%</p></div>
+    <div id="uploadProgress" class="progress hidden"><div id="uploadProgressBar"></div><p id="uploadProgressText">0%</p><p id="uploadSpeedText">0 MB/s</p></div>
 
     <div class="section-head"><h2><?= htmlspecialchars($pageTitle) ?></h2><div>☰ ⓘ</div></div>
     <h4 class="recent-title">Recents</h4>
@@ -476,7 +476,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
       <?php endforeach; ?>
 
       <?php foreach (array_slice($files, 0, 4) as $f): ?>
-      <a href="<?= htmlspecialchars(file_url($f)) ?>" target="_blank" class="folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'])) : '' ?>">
+      <a href="<?= htmlspecialchars(file_url($f)) ?>" target="_blank" class="folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
         <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" />
         <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
         <strong><?= htmlspecialchars($f['filename']) ?></strong>
@@ -488,7 +488,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
       <div class="row head"><div>الاسم</div><div>الحجم</div><div>آخر تعديل</div><div>الخيارات</div></div>
       <?php if (!$files): ?><div class="empty">لا توجد ملفات.</div><?php endif; ?>
       <?php foreach ($files as $f): ?>
-      <div class="row" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'])) : '' ?>">
+      <div class="row" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
         <div class="name-cell">
           <form method="post" class="inline-form"><input type="hidden" name="action" value="toggle_star"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><button class="star <?= (int)$f['is_starred']?'on':'' ?>">★</button></form>
           <a href="<?= htmlspecialchars(file_url($f)) ?>" target="_blank">
@@ -583,27 +583,51 @@ const singleFile = document.getElementById('singleFile');
 const pWrap = document.getElementById('uploadProgress');
 const pBar = document.getElementById('uploadProgressBar');
 const pText = document.getElementById('uploadProgressText');
+const pSpeed = document.getElementById('uploadSpeedText');
 uploadForm?.addEventListener('submit',(e)=>{
   e.preventDefault();
   if(!singleFile.files.length) return;
   const f=singleFile.files[0];
   if(f.size>MAX_FILE){ alert('الملف أكبر من 5 جيجابايت.'); return; }
+
+  document.getElementById('uploadModal')?.classList.add('hidden');
+  pWrap.classList.remove('hidden');
+  pBar.style.width='0%';
+  pText.textContent='0%';
+  pSpeed.textContent='0 MB/s';
+
   const fd=new FormData(uploadForm);
   const xhr=new XMLHttpRequest();
   xhr.open('POST', window.location.pathname, true);
-  pWrap.classList.remove('hidden');
+
+  let lastTime = performance.now();
+  let lastLoaded = 0;
   xhr.upload.onprogress=(ev)=>{
     if(ev.lengthComputable){
       const percent=Math.round((ev.loaded/ev.total)*100);
       pBar.style.width=percent+'%';
       pText.textContent=percent+'%';
+
+      const now = performance.now();
+      const deltaBytes = ev.loaded - lastLoaded;
+      const deltaSec = Math.max((now - lastTime)/1000, 0.001);
+      const speedMB = (deltaBytes / deltaSec) / (1024*1024);
+      pSpeed.textContent = speedMB.toFixed(2) + ' MB/s';
+      lastLoaded = ev.loaded;
+      lastTime = now;
     }
   };
   xhr.onload=()=>{
-    if(xhr.status>=200 && xhr.status<300){ location.reload(); }
-    else { try{const j=JSON.parse(xhr.responseText); alert(j.message||'فشل الرفع');}catch(_){alert('فشل الرفع');} }
+    if(xhr.status>=200 && xhr.status<300){
+      pText.textContent='100%';
+      pSpeed.textContent='اكتمل الرفع';
+      location.reload();
+    } else {
+      pWrap.classList.add('hidden');
+      try{const j=JSON.parse(xhr.responseText); alert(j.message||'فشل الرفع');}catch(_){alert('فشل الرفع');}
+    }
   };
-  xhr.onerror=()=>alert('فشل الاتصال أثناء الرفع.');
+  xhr.onerror=()=>{ pWrap.classList.add('hidden'); alert('فشل الاتصال أثناء الرفع.'); };
   xhr.send(fd);
 });
 
