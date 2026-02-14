@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS files (
   is_starred TINYINT(1) NOT NULL DEFAULT 0,
   is_trashed TINYINT(1) NOT NULL DEFAULT 0,
   download_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  uploader_ip VARCHAR(64) NULL,
+  uploader_country CHAR(2) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_file_token (shared_token),
   INDEX idx_user_status (user_id, is_trashed, is_starred),

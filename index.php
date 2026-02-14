@@ -45,6 +45,8 @@ function ensure_schema(PDO $pdo): void {
       is_starred TINYINT(1) NOT NULL DEFAULT 0,
       is_trashed TINYINT(1) NOT NULL DEFAULT 0,
       download_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      uploader_ip VARCHAR(64) NULL,
+      uploader_country CHAR(2) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uq_file_token (shared_token),
       INDEX idx_user_status (user_id, is_trashed, is_starred),
@@ -56,6 +58,8 @@ function ensure_schema(PDO $pdo): void {
     if (!in_array('folder_id', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN folder_id BIGINT UNSIGNED NULL, ADD INDEX idx_user_folder (user_id, folder_id)");
     if (!in_array('shared_token', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN shared_token VARCHAR(64) NULL, ADD UNIQUE KEY uq_file_token (shared_token)");
     if (!in_array('download_count', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN download_count BIGINT UNSIGNED NOT NULL DEFAULT 0");
+    if (!in_array('uploader_ip', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN uploader_ip VARCHAR(64) NULL");
+    if (!in_array('uploader_country', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN uploader_country CHAR(2) NULL");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS app_settings (
       `key` VARCHAR(100) PRIMARY KEY,
@@ -136,6 +140,24 @@ function is_extension_allowed(PDO $pdo, string $filename): bool {
     if ($allowed === null) return true;
     $ext = strtolower((string)pathinfo($filename, PATHINFO_EXTENSION));
     return $ext !== '' && in_array($ext, $allowed, true);
+}
+
+function get_client_ip(): string {
+    $keys = ['HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'REMOTE_ADDR'];
+    foreach ($keys as $k) {
+        if (!empty($_SERVER[$k])) {
+            $raw = (string)$_SERVER[$k];
+            $ip = trim(explode(',', $raw)[0]);
+            if ($ip !== '') return substr($ip, 0, 64);
+        }
+    }
+    return '0.0.0.0';
+}
+
+function get_country_code_from_request(): string {
+    $code = strtoupper(trim((string)($_SERVER['HTTP_CF_IPCOUNTRY'] ?? $_SERVER['GEOIP_COUNTRY_CODE'] ?? '')));
+    if (preg_match('/^[A-Z]{2}$/', $code)) return $code;
+    return 'ZZ';
 }
 
 function format_bytes(int $bytes): string {
@@ -476,8 +498,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'upload' || $action === 'upload_ajax' || $action === 'upload_folder') {
             if (empty($_FILES['file']['name']) && empty($_FILES['files']['name'])) throw new RuntimeException('اختر ملفاً أو مجلداً أولاً.');
             $currentStorage = get_user_storage($pdo, $user['id']);
+            $uploadIp = get_client_ip();
+            $uploadCountry = get_country_code_from_request();
 
-            $processSingle = function(array $one, ?int $folderId, ?string $displayName=null) use (&$currentStorage, $config, $pdo, $user) {
+            $processSingle = function(array $one, ?int $folderId, ?string $displayName=null) use (&$currentStorage, $config, $pdo, $user, $uploadIp, $uploadCountry) {
                 if ($one['error'] !== UPLOAD_ERR_OK) throw new RuntimeException('فشل رفع ملف.');
                 if ((int)$one['size'] > (int)$config['max_upload_size']) throw new RuntimeException('الملف أكبر من 5 جيجابايت.');
                 if (($currentStorage + (int)$one['size']) > USER_STORAGE_LIMIT) throw new RuntimeException('تم تجاوز سعة المستخدم 1 تيرابايت.');
@@ -488,8 +512,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $dest = $config['upload_dir'] . '/' . $stored;
                 if (!move_uploaded_file($one['tmp_name'], $dest)) throw new RuntimeException('تعذر حفظ الملف.');
                 $mime = mime_content_type($dest) ?: 'application/octet-stream';
-                $st = $pdo->prepare('INSERT INTO files (user_id,user_name,folder_id,filename,stored_name,mime_type,size_bytes,relative_path) VALUES (?,?,?,?,?,?,?,?)');
-                $st->execute([$user['id'], $user['name'], $folderId, $name, $stored, $mime, (int)$one['size'], 'uploads/' . $stored]);
+                $st = $pdo->prepare('INSERT INTO files (user_id,user_name,folder_id,filename,stored_name,mime_type,size_bytes,relative_path,uploader_ip,uploader_country) VALUES (?,?,?,?,?,?,?,?,?,?)');
+                $st->execute([$user['id'], $user['name'], $folderId, $name, $stored, $mime, (int)$one['size'], 'uploads/' . $stored, $uploadIp, $uploadCountry]);
                 $currentStorage += (int)$one['size'];
             };
 
@@ -607,10 +631,13 @@ $allFolders = [];
 $storage = 0;
 $search = trim((string)($_GET['q'] ?? ''));
 $pageTitle = 'My Drive';
-$adminStats = [];
+$adminStats = ['files'=>0,'users'=>0,'shared'=>0,'size'=>0,'downloads'=>0];
 $adminFiles = [];
 $adminUsers = [];
 $adminFolders = [];
+$adminCountryStats = [];
+$adminUploadsByMonth = [];
+$adminImageFiles = [];
 $allowedExtDisplay = '*';
 
 if ($user && $route === 'admin' && $pdo) {
@@ -619,10 +646,21 @@ if ($user && $route === 'admin' && $pdo) {
         'users' => (int)$pdo->query('SELECT COUNT(DISTINCT user_id) FROM files')->fetchColumn(),
         'shared' => (int)$pdo->query('SELECT COUNT(*) FROM files WHERE shared_token IS NOT NULL')->fetchColumn(),
         'size' => (int)$pdo->query('SELECT COALESCE(SUM(size_bytes),0) FROM files')->fetchColumn(),
+        'downloads' => (int)$pdo->query('SELECT COALESCE(SUM(download_count),0) FROM files')->fetchColumn(),
     ];
-    $adminFiles = $pdo->query('SELECT id,user_id,user_name,filename,mime_type,size_bytes,folder_id,shared_token,is_trashed,created_at FROM files ORDER BY created_at DESC LIMIT 800')->fetchAll();
+    $adminFiles = $pdo->query('SELECT id,user_id,user_name,filename,mime_type,size_bytes,folder_id,shared_token,is_trashed,created_at,uploader_country FROM files ORDER BY created_at DESC LIMIT 800')->fetchAll();
     $adminUsers = $pdo->query('SELECT user_id, MIN(user_name) user_name, COUNT(*) files_count, COALESCE(SUM(size_bytes),0) total_size FROM files GROUP BY user_id ORDER BY files_count DESC LIMIT 500')->fetchAll();
     $adminFolders = $pdo->query('SELECT id,name,user_id FROM folders ORDER BY id DESC LIMIT 1000')->fetchAll();
+
+    $stCountry = $pdo->query("SELECT COALESCE(NULLIF(uploader_country,''),'ZZ') country, COUNT(*) files_count, COUNT(DISTINCT user_id) uploaders_count FROM files GROUP BY COALESCE(NULLIF(uploader_country,''),'ZZ') ORDER BY files_count DESC");
+    $adminCountryStats = $stCountry->fetchAll();
+
+    $stMonth = $pdo->query("SELECT DATE_FORMAT(created_at, '%Y-%m') month_key, COUNT(*) files_count FROM files GROUP BY DATE_FORMAT(created_at, '%Y-%m') ORDER BY month_key ASC LIMIT 12");
+    $adminUploadsByMonth = $stMonth->fetchAll();
+
+    $stImages = $pdo->query("SELECT id,filename,relative_path,size_bytes,user_name,user_id,created_at FROM files WHERE mime_type LIKE 'image/%' AND is_trashed=0 ORDER BY created_at DESC LIMIT 120");
+    $adminImageFiles = $stImages->fetchAll();
+
     $allowedExtDisplay = get_setting($pdo, 'allowed_extensions', '*') ?: '*';
     $pageTitle = 'لوحة تحكم الإدارة';
 }
@@ -692,94 +730,218 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
   <img src="/public/login.gif" class="hero" alt="login" />
 </main>
 <?php elseif ($route === 'admin'): ?>
-<header class="topbar">
-  <div class="brand"><span class="menu">🛡</span><img src="/public/google-logo.png" alt=""/><span>Admin Panel</span></div>
-  <div class="profile"><img width="38" height="38" src="<?= htmlspecialchars($user['avatar'] ?: '/public/myimg.png') ?>" alt="avatar"/><span><?= htmlspecialchars($user['name']) ?></span><a class="header-logout" href="/logout">خروج</a></div>
-</header>
-<main style="padding:16px;max-width:1300px;margin:0 auto">
-  <?php if ($flash): ?><div class="flash <?= $flash['type'] ?>" style="margin-bottom:12px"><?= htmlspecialchars($flash['msg']) ?></div><?php endif; ?>
-  <section style="display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:10px;margin-bottom:14px">
-    <div class="storage-card"><strong><?= (int)$adminStats['files'] ?></strong><div>كل الملفات</div></div>
-    <div class="storage-card"><strong><?= (int)$adminStats['users'] ?></strong><div>كل الحسابات</div></div>
-    <div class="storage-card"><strong><?= (int)$adminStats['shared'] ?></strong><div>ملفات مشاركة</div></div>
-    <div class="storage-card"><strong><?= format_bytes((int)$adminStats['size']) ?></strong><div>إجمالي المساحة</div></div>
-  </section>
+<?php
+  $countryMap = [];
+  foreach ($adminCountryStats as $row) {
+    $code = strtoupper((string)($row['country'] ?? 'ZZ'));
+    if (!preg_match('/^[A-Z]{2}$/', $code)) $code = 'ZZ';
+    $countryMap[$code] = [
+      'files' => (int)$row['files_count'],
+      'uploaders' => (int)$row['uploaders_count'],
+    ];
+  }
+  $countryChartRows = [];
+  foreach ($countryMap as $code => $v) {
+    if ($code === 'ZZ') continue;
+    $countryChartRows[] = [$code, $v['uploaders'], $v['files']];
+  }
+  $monthLabels = [];
+  $monthCounts = [];
+  foreach ($adminUploadsByMonth as $m) {
+    $monthLabels[] = (string)$m['month_key'];
+    $monthCounts[] = (int)$m['files_count'];
+  }
+?>
+<style>
+.admin-shell{display:grid;grid-template-columns:250px 1fr;min-height:calc(100vh - 0px)}
+.admin-side{background:#1f2933;color:#d5dbe2;padding:18px 14px}
+.admin-side h2{margin:0 0 16px;font-size:30px;color:#fff}
+.admin-side a{display:block;color:#d5dbe2;text-decoration:none;padding:10px 8px;border-radius:8px;margin-bottom:4px}
+.admin-side a:hover,.admin-side a.active{background:#323f4b}
+.admin-main{padding:18px;background:#eef2f5}
+.admin-top{display:flex;justify-content:space-between;align-items:center;background:#fff;border:1px solid #d7dde3;border-radius:10px;padding:12px 16px;margin-bottom:14px}
+.admin-top h1{margin:0;font-size:44px}
+.stat-grid{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:10px;margin-bottom:14px}
+.stat{padding:14px;border-radius:10px;color:#fff}
+.stat b{font-size:28px;display:block}
+.stat.blue{background:#1f7aec}.stat.red{background:#dc3545}.stat.orange{background:#f0ad00}.stat.green{background:#28a745}.stat.dark{background:#4b5563}
+.panel{background:#fff;border:1px solid #d7dde3;border-radius:10px;padding:12px;margin-bottom:14px}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.world-map{height:360px}
+.image-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+.image-card{background:#fff;border:1px solid #d7dde3;border-radius:10px;overflow:hidden}
+.image-card img{width:100%;height:230px;object-fit:cover;background:#111}
+.image-meta{padding:8px;font-size:12px;line-height:1.5}
+@media(max-width:1300px){.image-grid{grid-template-columns:repeat(3,minmax(0,1fr));}.stat-grid{grid-template-columns:repeat(3,minmax(140px,1fr));}}
+@media(max-width:900px){.admin-shell{grid-template-columns:1fr}.two-col{grid-template-columns:1fr}.image-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.stat-grid{grid-template-columns:repeat(2,minmax(140px,1fr));}}
+</style>
+<div class="admin-shell">
+  <aside class="admin-side">
+    <h2>Uploady</h2>
+    <a class="active" href="/admin">📊 Dashboard</a>
+    <a href="#files">📁 Manage Files</a>
+    <a href="#images">🖼 Review Images</a>
+    <a href="#users">👥 Manage Users</a>
+    <a href="#settings">⚙ Edit Settings</a>
+    <a href="/drive">↩ العودة للدرايف</a>
+    <a href="/logout">🚪 خروج</a>
+  </aside>
+  <main class="admin-main">
+    <?php if ($flash): ?><div class="flash <?= $flash['type'] ?>" style="margin-bottom:10px"><?= htmlspecialchars($flash['msg']) ?></div><?php endif; ?>
+    <div class="admin-top">
+      <h1>Dashboard</h1>
+      <div><?= htmlspecialchars($user['name']) ?></div>
+    </div>
 
-  <section class="storage-card" style="margin-bottom:14px">
-    <h3>التحكم بامتدادات الملفات المسموحة</h3>
-    <form method="post" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <input type="hidden" name="action" value="admin_set_extensions">
-      <input type="hidden" name="redirect" value="/admin">
-      <input name="extensions" value="<?= htmlspecialchars($allowedExtDisplay) ?>" style="min-width:380px;padding:8px" placeholder="مثال: zip,rar,pdf أو * لكل الامتدادات">
-      <button type="submit">حفظ</button>
-      <small>القيمة الحالية: <b><?= htmlspecialchars($allowedExtDisplay) ?></b></small>
-    </form>
-  </section>
+    <section class="stat-grid">
+      <div class="stat blue"><b><?= (int)$adminStats['files'] ?></b> Total Files</div>
+      <div class="stat red"><b><?= (int)$adminStats['users'] ?></b> Total Uploaders</div>
+      <div class="stat orange"><b><?= (int)$adminStats['shared'] ?></b> Shared Files</div>
+      <div class="stat green"><b><?= (int)$adminStats['downloads'] ?></b> Total Downloads</div>
+      <div class="stat dark"><b><?= format_bytes((int)$adminStats['size']) ?></b> Total Storage</div>
+    </section>
 
-  <section class="storage-card" style="margin-bottom:14px">
-    <h3>إدارة حسابات المستخدمين (مسح جميع الملفات)</h3>
-    <form method="post" onsubmit="return confirm('تأكيد حذف جميع ملفات ومجلدات هذا المستخدم؟');" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <input type="hidden" name="action" value="admin_purge_user"><input type="hidden" name="redirect" value="/admin">
-      <select name="target_user_id" required>
-        <option value="">اختر المستخدم</option>
-        <?php foreach($adminUsers as $au): ?>
-        <option value="<?= htmlspecialchars($au['user_id']) ?>"><?= htmlspecialchars(($au['user_name'] ?: $au['user_id']) . ' | ملفات: ' . $au['files_count']) ?></option>
-        <?php endforeach; ?>
-      </select>
-      <button type="submit" style="background:#b91c1c;color:#fff">مسح كل ملفات المستخدم</button>
-    </form>
-  </section>
+    <section class="two-col">
+      <div class="panel">
+        <h3>Uploads per Month</h3>
+        <canvas id="uploadsByMonthChart" height="170"></canvas>
+      </div>
+      <div class="panel">
+        <h3>Uploads per Country</h3>
+        <div id="worldMapChart" class="world-map"></div>
+      </div>
+    </section>
 
-  <section class="storage-card" style="margin-bottom:14px;overflow:auto">
-    <h3>استعراض كامل الملفات + عمليات جماعية</h3>
-    <form method="post" id="adminBulkForm">
-      <input type="hidden" name="action" value="admin_bulk_files"><input type="hidden" name="redirect" value="/admin">
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-        <select name="bulk_op" id="bulkOp" required>
-          <option value="">اختر العملية</option>
-          <option value="trash">نقل للسلة</option>
-          <option value="delete">حذف نهائي</option>
-          <option value="move">نقل إلى مجلد</option>
-          <option value="unshare">إلغاء المشاركة</option>
-        </select>
-        <select name="target_folder_id" id="targetFolderSelect">
-          <option value="">الجذر (بدون مجلد)</option>
-          <?php foreach($adminFolders as $fd): ?>
-          <option value="<?= (int)$fd['id'] ?>">#<?= (int)$fd['id'] ?> - <?= htmlspecialchars($fd['name']) ?> (<?= htmlspecialchars($fd['user_id']) ?>)</option>
+    <section class="panel" id="settings">
+      <h3>Allowed Upload Extensions</h3>
+      <form method="post" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="hidden" name="action" value="admin_set_extensions">
+        <input type="hidden" name="redirect" value="/admin">
+        <input name="extensions" value="<?= htmlspecialchars($allowedExtDisplay) ?>" style="min-width:380px;padding:8px" placeholder="zip,rar,pdf أو *">
+        <button type="submit">Save</button>
+      </form>
+    </section>
+
+    <section class="panel" id="users">
+      <h3>Users / Purge User Files</h3>
+      <form method="post" onsubmit="return confirm('تأكيد حذف جميع ملفات ومجلدات هذا المستخدم؟');" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="hidden" name="action" value="admin_purge_user"><input type="hidden" name="redirect" value="/admin">
+        <select name="target_user_id" required>
+          <option value="">اختر المستخدم</option>
+          <?php foreach($adminUsers as $au): ?>
+          <option value="<?= htmlspecialchars($au['user_id']) ?>"><?= htmlspecialchars(($au['user_name'] ?: $au['user_id']) . ' | files: ' . $au['files_count']) ?></option>
           <?php endforeach; ?>
         </select>
-        <button type="submit">تنفيذ</button>
-        <button type="button" onclick="document.querySelectorAll('.admin-file-check').forEach(c=>c.checked=true)">تحديد الكل</button>
-        <button type="button" onclick="document.querySelectorAll('.admin-file-check').forEach(c=>c.checked=false)">إلغاء الكل</button>
-      </div>
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead><tr style="background:#f3f4f6"><th></th><th>ID</th><th>المستخدم</th><th>الملف</th><th>الامتداد</th><th>الحجم</th><th>مجلد</th><th>مشاركة</th><th>الحالة</th><th>التاريخ</th></tr></thead>
-        <tbody>
-        <?php foreach($adminFiles as $af): $ex = strtolower((string)pathinfo((string)$af['filename'], PATHINFO_EXTENSION)); ?>
-          <tr>
-            <td><input class="admin-file-check" type="checkbox" name="file_ids[]" value="<?= (int)$af['id'] ?>"></td>
-            <td><?= (int)$af['id'] ?></td>
-            <td><?= htmlspecialchars($af['user_name'] ?: $af['user_id']) ?><br><small><?= htmlspecialchars($af['user_id']) ?></small></td>
-            <td><?= htmlspecialchars($af['filename']) ?></td>
-            <td><?= htmlspecialchars($ex ?: '-') ?></td>
-            <td><?= format_bytes((int)$af['size_bytes']) ?></td>
-            <td><?= $af['folder_id'] === null ? '-' : (int)$af['folder_id'] ?></td>
-            <td><?= $af['shared_token'] ? '✅' : '—' ?></td>
-            <td><?= (int)$af['is_trashed'] ? '🗑' : 'نشط' ?></td>
-            <td><?= htmlspecialchars((string)$af['created_at']) ?></td>
-          </tr>
+        <button type="submit" style="background:#b91c1c;color:#fff">Purge User</button>
+      </form>
+    </section>
+
+    <section class="panel" id="files" style="overflow:auto">
+      <h3>Latest Files / Bulk Actions</h3>
+      <form method="post" id="adminBulkForm">
+        <input type="hidden" name="action" value="admin_bulk_files"><input type="hidden" name="redirect" value="/admin">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+          <select name="bulk_op" id="bulkOp" required>
+            <option value="">اختر العملية</option>
+            <option value="trash">Move to trash</option>
+            <option value="delete">Delete forever</option>
+            <option value="move">Move folder</option>
+            <option value="unshare">Disable share</option>
+          </select>
+          <select name="target_folder_id" id="targetFolderSelect">
+            <option value="">Root</option>
+            <?php foreach($adminFolders as $fd): ?>
+            <option value="<?= (int)$fd['id'] ?>">#<?= (int)$fd['id'] ?> - <?= htmlspecialchars($fd['name']) ?> (<?= htmlspecialchars($fd['user_id']) ?>)</option>
+            <?php endforeach; ?>
+          </select>
+          <button type="submit">Apply</button>
+          <button type="button" onclick="document.querySelectorAll('.admin-file-check').forEach(c=>c.checked=true)">Select all</button>
+          <button type="button" onclick="document.querySelectorAll('.admin-file-check').forEach(c=>c.checked=false)">Clear</button>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="background:#f3f4f6"><th></th><th>ID</th><th>Filename</th><th>Uploader</th><th>Country</th><th>Size</th><th>Shared</th><th>Uploaded at</th></tr></thead>
+          <tbody>
+          <?php foreach($adminFiles as $af): ?>
+            <tr>
+              <td><input class="admin-file-check" type="checkbox" name="file_ids[]" value="<?= (int)$af['id'] ?>"></td>
+              <td><?= (int)$af['id'] ?></td>
+              <td><?= htmlspecialchars($af['filename']) ?></td>
+              <td><?= htmlspecialchars($af['user_name'] ?: $af['user_id']) ?></td>
+              <td><?= htmlspecialchars((string)($af['uploader_country'] ?: 'ZZ')) ?></td>
+              <td><?= format_bytes((int)$af['size_bytes']) ?></td>
+              <td><?= $af['shared_token'] ? '✅' : '—' ?></td>
+              <td><?= htmlspecialchars((string)$af['created_at']) ?></td>
+            </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      </form>
+    </section>
+
+    <section class="panel" id="images">
+      <h3>Image Moderation (5 per row)</h3>
+      <div class="image-grid">
+        <?php foreach($adminImageFiles as $img): ?>
+          <div class="image-card">
+            <a href="<?= htmlspecialchars(file_url($img)) ?>" target="_blank"><img src="/<?= htmlspecialchars($img['relative_path']) ?>" alt="<?= htmlspecialchars($img['filename']) ?>"></a>
+            <div class="image-meta">
+              <div><strong><?= htmlspecialchars($img['filename']) ?></strong></div>
+              <div><?= htmlspecialchars($img['user_name'] ?: $img['user_id']) ?> · <?= format_bytes((int)$img['size_bytes']) ?></div>
+            </div>
+          </div>
         <?php endforeach; ?>
-        </tbody>
-      </table>
-    </form>
-  </section>
-</main>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://www.gstatic.com/charts/loader.js"></script>
 <script>
+const monthLabels = <?= json_encode($monthLabels, JSON_UNESCAPED_UNICODE) ?>;
+const monthCounts = <?= json_encode($monthCounts, JSON_UNESCAPED_UNICODE) ?>;
+const countryRows = <?= json_encode($countryChartRows, JSON_UNESCAPED_UNICODE) ?>;
+const countryMap = <?= json_encode($countryMap, JSON_UNESCAPED_UNICODE) ?>;
+
 const bulkOp=document.getElementById('bulkOp');
 const folderSel=document.getElementById('targetFolderSelect');
 if(bulkOp&&folderSel){
   const sync=()=>{folderSel.style.display=(bulkOp.value==='move')?'inline-block':'none';};
   bulkOp.addEventListener('change',sync);sync();
+}
+
+if (window.Chart) {
+  const ctx = document.getElementById('uploadsByMonthChart');
+  if (ctx) new Chart(ctx, {
+    type: 'bar',
+    data: { labels: monthLabels, datasets: [{ label: 'Uploads', data: monthCounts, backgroundColor: '#1f7aec' }] },
+    options: { responsive: true, plugins: { legend: { display: false } } }
+  });
+}
+
+google.charts.load('current', {'packages':['geochart']});
+google.charts.setOnLoadCallback(drawRegionsMap);
+function drawRegionsMap() {
+  const arr = [['Country', 'Uploaders', 'Files']].concat(countryRows);
+  const data = google.visualization.arrayToDataTable(arr.length > 1 ? arr : [['Country','Uploaders','Files'], ['US',0,0]]);
+  const options = {
+    legend: 'none',
+    datalessRegionColor: '#e5e7eb',
+    colorAxis: { colors: ['#93c5fd', '#1d4ed8'] },
+    tooltip: { textStyle: { fontName: 'Cairo' } }
+  };
+  const chart = new google.visualization.GeoChart(document.getElementById('worldMapChart'));
+  chart.draw(data, options);
+  google.visualization.events.addListener(chart, 'select', function() {
+    const sel = chart.getSelection();
+    if (!sel.length) return;
+    const row = sel[0].row;
+    if (row == null) return;
+    const code = data.getValue(row, 0);
+    const info = countryMap[code] || {files:0,uploaders:0};
+    alert(`Country ${code}
+Total uploaders: ${info.uploaders}
+Total files: ${info.files}`);
+  });
 }
 </script>
 <?php else: ?>
