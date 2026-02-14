@@ -1,10 +1,20 @@
-# ضع هذا داخل server block في Nginx
+# CloudPanel / Nginx (Proxy -> App) example for this project
+# IMPORTANT: put this exact rule BEFORE your static-files regex location.
+# It prevents /d/{id}/{filename}.png from being treated as a static file.
+location ^~ /d/ {
+    try_files $uri $uri/ /index.php?$query_string;
+}
+
+# Main app router
 location / {
     try_files $uri $uri/ /index.php?$query_string;
 }
 
+# PHP-FPM
 location ~ \.php$ {
     include fastcgi_params;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-    fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+    fastcgi_pass 127.0.0.1:{{php_fpm_port}};
+    fastcgi_read_timeout 3600;
+    fastcgi_send_timeout 3600;
 }
