@@ -108,7 +108,7 @@ function share_url(string $token, string $filename): string {
     if ($ext === '') $ext = 'bin';
     return '/s/' . $token . '.' . $ext;
 }
-function token(): string { return bin2hex(random_bytes(5)); }
+function token(): string { return bin2hex(random_bytes(16)); }
 
 function should_show_download_page(string $filename, string $mime): bool {
     $ext = strtolower((string)pathinfo($filename, PATHINFO_EXTENSION));
