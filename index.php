@@ -331,8 +331,16 @@ if (!empty($segments[0]) && $segments[0] === 's' && isset($segments[1])) {
     $abs = __DIR__ . '/' . $file['relative_path'];
     if (!is_file($abs)) { http_response_code(404); exit('Missing file'); }
     increment_download_count($pdo, (int)$file['id']);
-    header('Content-Type: ' . ($file['mime_type'] ?: 'application/octet-stream'));
-    header('Content-Length: ' . filesize($abs));
+    $mimeOut = $file['mime_type'] ?: 'application/octet-stream';
+    $fsize = filesize($abs);
+    $mtime = filemtime($abs) ?: time();
+    $etag = 'W/"' . md5($file['id'] . '|' . $fsize . '|' . $mtime) . '"';
+    header('Content-Type: ' . $mimeOut);
+    header('Content-Length: ' . $fsize);
+    header('ETag: ' . $etag);
+    header('Last-Modified: ' . gmdate('D, d M Y H:i:s', $mtime) . ' GMT');
+    if (str_starts_with((string)$mimeOut, 'image/')) header('Cache-Control: private, max-age=86400');
+    else header('Cache-Control: private, max-age=3600');
     $disp = $downloadFlag ? 'attachment' : 'inline';
     header("Content-Disposition: {$disp}; filename*=UTF-8''" . rawurlencode($file['filename']));
     readfile($abs);
@@ -362,8 +370,16 @@ if (!empty($segments[0]) && $segments[0] === 'd' && isset($segments[1])) {
     $abs = __DIR__ . '/' . $file['relative_path'];
     if (!is_file($abs)) { http_response_code(404); exit('Missing'); }
     increment_download_count($pdo, (int)$file['id']);
-    header('Content-Type: ' . ($file['mime_type'] ?: 'application/octet-stream'));
-    header('Content-Length: ' . filesize($abs));
+    $mimeOut = $file['mime_type'] ?: 'application/octet-stream';
+    $fsize = filesize($abs);
+    $mtime = filemtime($abs) ?: time();
+    $etag = 'W/"' . md5($file['id'] . '|' . $fsize . '|' . $mtime) . '"';
+    header('Content-Type: ' . $mimeOut);
+    header('Content-Length: ' . $fsize);
+    header('ETag: ' . $etag);
+    header('Last-Modified: ' . gmdate('D, d M Y H:i:s', $mtime) . ' GMT');
+    if (str_starts_with((string)$mimeOut, 'image/')) header('Cache-Control: private, max-age=86400');
+    else header('Cache-Control: private, max-age=3600');
     $disp = $downloadFlag ? 'attachment' : 'inline';
     header("Content-Disposition: {$disp}; filename*=UTF-8''" . rawurlencode($file['filename']));
     readfile($abs);
@@ -398,6 +414,7 @@ elseif ($segments[0] === 'admin') {
 $flash = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
+    $isAjax = strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest';
     try {
         if ($action === 'login') {
             $xf = xf_auth($config, trim($_POST['username'] ?? ''), (string)($_POST['password'] ?? ''));
@@ -616,10 +633,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        if ($isAjax || $action === 'upload_ajax') {
+            $payload = ['ok' => true, 'message' => 'تم التنفيذ بنجاح'];
+            if ($action === 'toggle_share_file') {
+                $fid = (int)($_POST['id'] ?? 0);
+                $qf = $pdo->prepare('SELECT filename,shared_token FROM files WHERE id=? AND user_id=? LIMIT 1');
+                $qf->execute([$fid, $user['id']]);
+                $rf = $qf->fetch();
+                $payload['share_url'] = (!empty($rf['shared_token']) && !empty($rf['filename'])) ? share_url((string)$rf['shared_token'], (string)$rf['filename']) : null;
+            }
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode($payload);
+            exit;
+        }
+
         header('Location: ' . $redirect);
         exit;
     } catch (Throwable $e) {
-        if ($action === 'upload_ajax') {
+        if ($action === 'upload_ajax' || $isAjax) {
             header('Content-Type: application/json; charset=utf-8', true, 400);
             echo json_encode(['ok' => false, 'message' => $e->getMessage()]);
             exit;
@@ -1031,30 +1062,16 @@ function drawRegionsMap() {
       </a>
       <?php endforeach; ?>
     </div>
-
-    <div class="table">
-      <div class="row head"><div>الاسم</div><div>الحجم</div><div>آخر تعديل</div><div>الخيارات</div></div>
+    <div class="files-grid">
       <?php if (!$files): ?><div class="empty">لا توجد ملفات.</div><?php endif; ?>
       <?php foreach ($files as $f): ?>
-      <div class="row" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
-        <div class="name-cell">
-          <form method="post" class="inline-form"><input type="hidden" name="action" value="toggle_star"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><button class="star <?= (int)$f['is_starred']?'on':'' ?>">★</button></form>
-          <a href="<?= htmlspecialchars(file_url($f)) ?>" target="_blank">
-            <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" class="thumb-mini" alt="thumb"><?php else: ?><span>📄</span><?php endif; ?>
-            <span title="<?= htmlspecialchars($f['filename']) ?>"><?= htmlspecialchars($f['filename']) ?></span>
-          </a>
-        </div>
-        <div><?= format_bytes((int)$f['size_bytes']) ?></div>
-        <div><?= htmlspecialchars($f['created_at']) ?></div>
-        <div class="actions">
-          <?php if ($route === 'trash'): ?>
-            <form method="post" class="inline-form"><input type="hidden" name="action" value="restore"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><button>استعادة</button></form>
-            <form method="post" class="inline-form"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><button>حذف نهائي</button></form>
-          <?php else: ?>
-            <form method="post" class="inline-form"><input type="hidden" name="action" value="trash"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><button>نقل للسلة</button></form>
-            <form method="post" class="inline-form"><input type="hidden" name="action" value="move_file"><input type="hidden" name="id" value="<?= (int)$f['id'] ?>"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><select name="target_folder_id"><option value="">الجذر</option><?php foreach ($allFolders as $op): ?><option value="<?= (int)$op['id'] ?>" <?= ((int)$f['folder_id']===(int)$op['id'])?'selected':'' ?>><?= htmlspecialchars($op['name']) ?></option><?php endforeach; ?></select><button>نقل</button></form>
-          <?php endif; ?>
-        </div>
+      <div class="file-grid-card folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
+        <a href="<?= htmlspecialchars(file_url($f)) ?>" target="_blank" class="file-grid-thumb-link">
+          <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" />
+          <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
+        </a>
+        <strong><?= htmlspecialchars($f['filename']) ?></strong>
+        <small><?= format_bytes((int)$f['size_bytes']) ?> • <?= htmlspecialchars((string)$f['created_at']) ?></small>
       </div>
       <?php endforeach; ?>
     </div>
@@ -1236,7 +1253,18 @@ function openShareDialog(el){
   shareModal.classList.remove('hidden');
 }
 
-function submitCmd(cmd, el){
+async function postAction(action, payload={}){
+  const fd=new FormData();
+  fd.append('action', action);
+  fd.append('redirect', window.location.pathname);
+  Object.entries(payload).forEach(([k,v])=>fd.append(k, v==null?'':String(v)));
+  const r=await fetch(window.location.pathname,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd});
+  const j=await r.json();
+  if(!r.ok || !j.ok) throw new Error(j.message||'فشلت العملية');
+  return j;
+}
+
+async function submitCmd(cmd, el){
   if(!el) return;
   const type=el.dataset.type;
   const id=el.dataset.id;
@@ -1257,13 +1285,14 @@ function submitCmd(cmd, el){
   if(cmd==='rename'){
     const n=prompt('الاسم الجديد:', el.dataset.name||'');
     if(!n) return;
-    cmdAction.value=(type==='file'?'rename_file':'rename_folder'); cmdId.value=id; cmdName.value=n; cmdForm.submit();
+    await postAction((type==='file'?'rename_file':'rename_folder'), {id:id,new_name:n});
+    el.dataset.name=n;
+    const lbl=el.querySelector('strong'); if(lbl) lbl.textContent=n;
   }
   if(cmd==='move' && type==='file'){
     const to=prompt('أدخل رقم المجلد الهدف (فارغ = الجذر):','');
-    const form=document.createElement('form'); form.method='post'; form.className='hidden';
-    form.innerHTML=`<input name="action" value="move_file"><input name="id" value="${id}"><input name="target_folder_id" value="${to}"><input name="redirect" value="${window.location.pathname}">`;
-    document.body.appendChild(form); form.submit();
+    await postAction('move_file', {id:id,target_folder_id:to});
+    el.remove();
   }
   if(cmd==='share' && type==='file'){ openShareDialog(el); return; }
   if(cmd==='copy' && type==='file'){
@@ -1272,7 +1301,8 @@ function submitCmd(cmd, el){
     navigator.clipboard.writeText(window.location.origin+url); alert('تم نسخ رابط المشاركة');
   }
   if(cmd==='delete'){
-    cmdAction.value=(type==='file'?'trash':'delete_folder'); cmdId.value=id; cmdName.value=''; cmdForm.submit();
+    await postAction((type==='file'?'trash':'delete_folder'), {id:id});
+    el.remove();
   }
 }
 
@@ -1309,18 +1339,21 @@ document.querySelectorAll('[data-select-cmd]').forEach(btn=>btn.addEventListener
     alert('هذه العملية متاحة لعنصر واحد فقط حالياً.');
     return;
   }
-  submitCmd(btn.dataset.selectCmd, primary);
+  submitCmd(btn.dataset.selectCmd, primary).catch(e=>alert(e.message));
 }));
 
 shareAccessSelect?.addEventListener('change',()=>{
   const isPrivate=shareAccessSelect.value==='private';
   shareNote.textContent=isPrivate?'لن يتمكن غير الأشخاص الذين لديهم إذن الوصول إلى الرابط':'أي شخص لديه الرابط سيتمكن من الوصول.';
 });
-shareCopyBtn?.addEventListener('click',()=>{
+shareCopyBtn?.addEventListener('click', async ()=>{
   const primary=getPrimary();
   if(!primary || primary.dataset.type!=='file'){ alert('اختر ملفاً أولاً.'); return; }
   if(!primary.dataset.shareUrl){
-    if(confirm('الملف غير مشارك. تفعيل المشاركة الآن؟')){ cmdAction.value='toggle_share_file'; cmdId.value=primary.dataset.id; cmdName.value=''; cmdForm.submit(); }
+    if(confirm('الملف غير مشارك. تفعيل المشاركة الآن؟')){
+      const res=await postAction('toggle_share_file',{id:primary.dataset.id});
+      primary.dataset.shareUrl=res.share_url||'';
+    }
     return;
   }
   navigator.clipboard.writeText(window.location.origin + primary.dataset.shareUrl);
@@ -1328,15 +1361,11 @@ shareCopyBtn?.addEventListener('click',()=>{
 });
 shareDoneBtn?.addEventListener('click',()=>shareModal.classList.add('hidden'));
 
-const cmdForm=document.getElementById('cmdForm');
-const cmdAction=document.getElementById('cmdAction');
-const cmdId=document.getElementById('cmdId');
-const cmdName=document.getElementById('cmdName');
 ctxMenu?.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',(e)=>{
   e.stopPropagation();
   const primary=getPrimary();
   if(!primary) return;
-  submitCmd(btn.dataset.cmd, primary);
+  submitCmd(btn.dataset.cmd, primary).catch(e=>alert(e.message));
 }));
 </script>
 <?php endif; ?>

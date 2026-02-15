@@ -70,3 +70,9 @@ select{border-radius:10px;border:1px solid #d3d8e3;background:#fff;padding:0 10p
 .share-actions button{height:38px;min-width:110px;border-radius:20px}
 .share-actions #shareDoneBtn{background:#8ab4f8;border:0;color:#0f172a}
 .share-actions #shareCopyBtn{background:transparent;color:#cfe2ff;border:1px solid #5a6f8f}
+
+.files-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-top:10px}
+.file-grid-card{width:auto;min-height:220px;align-items:stretch}
+.file-grid-card .file-grid-thumb-link{display:block;width:100%}
+.file-grid-card small{display:block;color:#6b7280;text-align:right;margin-top:4px}
+.file-grid-card img,.file-grid-card .folder-placeholder{height:150px}
