@@ -2,7 +2,7 @@
 session_start();
 $config = require __DIR__ . '/config.php';
 
-const USER_STORAGE_LIMIT = 1099511627776; // 1 TB
+const USER_STORAGE_LIMIT = 1099511627776; // 1 تيرابايت
 
 if (!is_dir($config['upload_dir'])) {
     mkdir($config['upload_dir'], 0775, true);
@@ -259,7 +259,7 @@ function render_download_page(array $file, string $downloadUrl, bool $isShared=f
       .footer{background:#fff;border-top:1px solid var(--border);padding:14px 20px;text-align:center;color:#6b7280;font-size:13px;margin-top:auto}
       @media(max-width:900px){.box{grid-template-columns:1fr}.file-name{font-size:30px}.btn{width:100%;font-size:32px}}
     </style></head><body>
-    <header class='topbar'><div class='brand'><i class='fa-solid fa-cloud-arrow-down'></i> Safe Drive Download</div></header>
+    <header class='topbar'><div class='brand'><i class='fa-solid fa-cloud-arrow-down'></i> تنزيل سيف درايف</div></header>
     <main class='wrap'>
       <h1 class='file-name'>{$name}</h1>
       <div class='file-sub'>{$title}</div>
@@ -282,7 +282,7 @@ function render_download_page(array $file, string $downloadUrl, bool $isShared=f
         </section>
       </div>
     </main>
-    <footer class='footer'>جميع الحقوق محفوظة - Safe Drive</footer>
+    <footer class='footer'>جميع الحقوق محفوظة - سيف درايف</footer>
     <script>
       let c=8;const el=document.getElementById('count');const b=document.getElementById('dlBtn');
       const finalUrl={$downloadUrlJs};
@@ -637,7 +637,7 @@ $folders = [];
 $allFolders = [];
 $storage = 0;
 $search = trim((string)($_GET['q'] ?? ''));
-$pageTitle = 'My Drive';
+$pageTitle = 'ملفاتي';
 $adminStats = ['files'=>0,'users'=>0,'shared'=>0,'size'=>0,'downloads'=>0];
 $adminFiles = [];
 $adminUsers = [];
@@ -672,7 +672,7 @@ if ($user && str_starts_with($route, 'admin') && $pdo) {
     $pageTitle = 'لوحة تحكم الإدارة';
 }
 
-if ($user && $route !== 'login' && $route !== 'admin' && $pdo) {
+if ($user && $route !== 'login' && !str_starts_with($route, 'admin') && $pdo) {
     $storage = get_user_storage($pdo, $user['id']);
 
     $all = $pdo->prepare('SELECT id,name,parent_id FROM folders WHERE user_id=? ORDER BY name');
@@ -703,8 +703,8 @@ if ($user && $route !== 'login' && $route !== 'admin' && $pdo) {
     $st->execute();
     $files = $st->fetchAll();
 
-    $map = ['drive'=>'My Drive','recent'=>'Recent','starred'=>'Starred','trash'=>'Trash','search'=>'Search Results','folder'=>'Folder'];
-    $pageTitle = $map[$route] ?? 'My Drive';
+    $map = ['drive'=>'ملفاتي','recent'=>'الأحدث','starred'=>'المميزة','trash'=>'سلة المحذوفات','search'=>'نتائج البحث','folder'=>'مجلد'];
+    $pageTitle = $map[$route] ?? 'ملفاتي';
 }
 
 $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
@@ -714,7 +714,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Safe Drive</title>
+  <title>سيف درايف</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" />
   <link rel="stylesheet" href="/public/assets/style.css?v=<?= $cssVersion ?>" />
 </head>
@@ -784,37 +784,37 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
 </style>
 <div class="admin-shell">
   <aside class="admin-side">
-    <h2>Uploady</h2>
-    <a class="<?= $route==='admin'?'active':'' ?>" href="/admin">📊 Dashboard</a>
-    <a class="<?= $route==='admin_files'?'active':'' ?>" href="/admin/files">📁 Manage Files</a>
-    <a class="<?= $route==='admin_images'?'active':'' ?>" href="/admin/images">🖼 Review Images</a>
-    <a class="<?= $route==='admin_settings'?'active':'' ?>" href="/admin/settings">⚙ Edit Settings</a>
+    <h2>لوحة الإدارة</h2>
+    <a class="<?= $route==='admin'?'active':'' ?>" href="/admin">📊 الإحصائيات</a>
+    <a class="<?= $route==='admin_files'?'active':'' ?>" href="/admin/files">📁 إدارة الملفات</a>
+    <a class="<?= $route==='admin_images'?'active':'' ?>" href="/admin/images">🖼 مراجعة الصور</a>
+    <a class="<?= $route==='admin_settings'?'active':'' ?>" href="/admin/settings">⚙ الإعدادات</a>
     <a href="/drive">↩ العودة للدرايف</a>
     <a href="/logout">🚪 خروج</a>
   </aside>
   <main class="admin-main">
     <?php if ($flash): ?><div class="flash <?= $flash['type'] ?>" style="margin-bottom:10px"><?= htmlspecialchars($flash['msg']) ?></div><?php endif; ?>
     <div class="admin-top">
-      <h1>Dashboard</h1>
+      <h1>لوحة الإحصائيات</h1>
       <div><?= htmlspecialchars($user['name']) ?></div>
     </div>
 
     <?php if ($route === "admin"): ?>
     <section class="stat-grid">
-      <div class="stat blue"><b><?= (int)$adminStats['files'] ?></b> Total Files</div>
-      <div class="stat red"><b><?= (int)$adminStats['users'] ?></b> Total Uploaders</div>
-      <div class="stat orange"><b><?= (int)$adminStats['shared'] ?></b> Shared Files</div>
-      <div class="stat green"><b><?= (int)$adminStats['downloads'] ?></b> Total Downloads</div>
-      <div class="stat dark"><b><?= format_bytes((int)$adminStats['size']) ?></b> Total Storage</div>
+      <div class="stat blue"><b><?= (int)$adminStats['files'] ?></b> إجمالي الملفات</div>
+      <div class="stat red"><b><?= (int)$adminStats['users'] ?></b> إجمالي الرافعين</div>
+      <div class="stat orange"><b><?= (int)$adminStats['shared'] ?></b> الملفات المشاركة</div>
+      <div class="stat green"><b><?= (int)$adminStats['downloads'] ?></b> إجمالي التنزيلات</div>
+      <div class="stat dark"><b><?= format_bytes((int)$adminStats['size']) ?></b> إجمالي المساحة</div>
     </section>
 
     <section class="two-col">
       <div class="panel">
-        <h3>Uploads per Month</h3>
+        <h3>الرفع حسب الأشهر</h3>
         <canvas id="uploadsByMonthChart" height="170"></canvas>
       </div>
       <div class="panel">
-        <h3>Uploads per Country</h3>
+        <h3>الرفع حسب الدولة</h3>
         <div id="worldMapChart" class="world-map"></div>
       </div>
     </section>
@@ -822,55 +822,55 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
 
     <?php if ($route === "admin" || $route === "admin_settings"): ?>
     <section class="panel" id="settings">
-      <h3>Allowed Upload Extensions</h3>
+      <h3>امتدادات الرفع المسموحة</h3>
       <form method="post" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input type="hidden" name="action" value="admin_set_extensions">
         <input type="hidden" name="redirect" value="/admin">
         <input name="extensions" value="<?= htmlspecialchars($allowedExtDisplay) ?>" style="min-width:380px;padding:8px" placeholder="zip,rar,pdf أو *">
-        <button type="submit">Save</button>
+        <button type="submit">حفظ</button>
       </form>
     </section>
 
     <section class="panel" id="users">
-      <h3>Users / Purge User Files</h3>
+      <h3>المستخدمون / مسح ملفات مستخدم</h3>
       <form method="post" onsubmit="return confirm('تأكيد حذف جميع ملفات ومجلدات هذا المستخدم؟');" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input type="hidden" name="action" value="admin_purge_user"><input type="hidden" name="redirect" value="/admin">
         <select name="target_user_id" required>
           <option value="">اختر المستخدم</option>
           <?php foreach($adminUsers as $au): ?>
-          <option value="<?= htmlspecialchars($au['user_id']) ?>"><?= htmlspecialchars(($au['user_name'] ?: $au['user_id']) . ' | files: ' . $au['files_count']) ?></option>
+          <option value="<?= htmlspecialchars($au['user_id']) ?>"><?= htmlspecialchars(($au['user_name'] ?: $au['user_id']) . ' | ملفات: ' . $au['files_count']) ?></option>
           <?php endforeach; ?>
         </select>
-        <button type="submit" style="background:#b91c1c;color:#fff">Purge User</button>
+        <button type="submit" style="background:#b91c1c;color:#fff">مسح ملفات المستخدم</button>
       </form>
     </section>
     <?php endif; ?>
 
     <?php if ($route === "admin_files"): ?>
     <section class="panel" id="files" style="overflow:auto">
-      <h3>Latest Files / Bulk Actions</h3>
+      <h3>أحدث الملفات / إجراءات جماعية</h3>
       <form method="post" id="adminBulkForm">
         <input type="hidden" name="action" value="admin_bulk_files"><input type="hidden" name="redirect" value="/admin">
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
           <select name="bulk_op" id="bulkOp" required>
             <option value="">اختر العملية</option>
-            <option value="trash">Move to trash</option>
-            <option value="delete">Delete forever</option>
-            <option value="move">Move folder</option>
-            <option value="unshare">Disable share</option>
+            <option value="trash">نقل إلى المهملات</option>
+            <option value="delete">حذف نهائي</option>
+            <option value="move">نقل إلى مجلد</option>
+            <option value="unshare">إلغاء المشاركة</option>
           </select>
           <select name="target_folder_id" id="targetFolderSelect">
-            <option value="">Root</option>
+            <option value="">الجذر</option>
             <?php foreach($adminFolders as $fd): ?>
             <option value="<?= (int)$fd['id'] ?>">#<?= (int)$fd['id'] ?> - <?= htmlspecialchars($fd['name']) ?> (<?= htmlspecialchars($fd['user_id']) ?>)</option>
             <?php endforeach; ?>
           </select>
-          <button type="submit">Apply</button>
-          <button type="button" onclick="document.querySelectorAll('.admin-file-check').forEach(c=>c.checked=true)">Select all</button>
-          <button type="button" onclick="document.querySelectorAll('.admin-file-check').forEach(c=>c.checked=false)">Clear</button>
+          <button type="submit">تنفيذ</button>
+          <button type="button" onclick="document.querySelectorAll('.admin-file-check').forEach(c=>c.checked=true)">تحديد الكل</button>
+          <button type="button" onclick="document.querySelectorAll('.admin-file-check').forEach(c=>c.checked=false)">إلغاء التحديد</button>
         </div>
         <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead><tr style="background:#f3f4f6"><th></th><th>ID</th><th>Filename</th><th>Uploader</th><th>Country</th><th>Size</th><th>Shared</th><th>Uploaded at</th></tr></thead>
+          <thead><tr style="background:#f3f4f6"><th></th><th>المعرف</th><th>اسم الملف</th><th>الرافع</th><th>الدولة</th><th>الحجم</th><th>المشاركة</th><th>تاريخ الرفع</th></tr></thead>
           <tbody>
           <?php foreach($adminFiles as $af): ?>
             <tr>
@@ -892,7 +892,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
 
     <?php if ($route === "admin_images"): ?>
     <section class="panel" id="images">
-      <h3>Image Moderation (5 per row)</h3>
+      <h3>مراجعة الصور (5 بكل صف)</h3>
       <div class="image-grid">
         <?php foreach($adminImageFiles as $img): ?>
           <div class="image-card">
@@ -927,7 +927,7 @@ if (window.Chart) {
   const ctx = document.getElementById('uploadsByMonthChart');
   if (ctx) new Chart(ctx, {
     type: 'bar',
-    data: { labels: monthLabels, datasets: [{ label: 'Uploads', data: monthCounts, backgroundColor: '#1f7aec' }] },
+    data: { labels: monthLabels, datasets: [{ label: 'عمليات الرفع', data: monthCounts, backgroundColor: '#1f7aec' }] },
     options: { responsive: true, plugins: { legend: { display: false } } }
   });
 }
@@ -935,8 +935,8 @@ if (window.Chart) {
 google.charts.load('current', {'packages':['geochart']});
 google.charts.setOnLoadCallback(drawRegionsMap);
 function drawRegionsMap() {
-  const arr = [['Country', 'Uploaders', 'Files']].concat(countryRows);
-  const data = google.visualization.arrayToDataTable(arr.length > 1 ? arr : [['Country','Uploaders','Files'], ['US',0,0]]);
+  const arr = [['الدولة', 'عدد الرافعين', 'عدد الملفات']].concat(countryRows);
+  const data = google.visualization.arrayToDataTable(arr.length > 1 ? arr : [['الدولة','عدد الرافعين','عدد الملفات'], ['US',0,0]]);
   const options = {
     legend: 'none',
     datalessRegionColor: '#e5e7eb',
@@ -952,15 +952,13 @@ function drawRegionsMap() {
     if (row == null) return;
     const code = data.getValue(row, 0);
     const info = countryMap[code] || {files:0,uploaders:0};
-    alert(`Country ${code}
-Total uploaders: ${info.uploaders}
-Total files: ${info.files}`);
+    alert(`الدولة: ${code}\nإجمالي الرافعين: ${info.uploaders}\nإجمالي الملفات: ${info.files}`);
   });
 }
 </script>
 <?php else: ?>
 <header class="topbar">
-  <div class="brand"><span class="menu">☰</span><img src="/public/google-logo.png" alt=""/><span>Drive</span></div>
+  <div class="brand"><span class="menu">☰</span><img src="/public/google-logo.png" alt=""/><span>درايف</span></div>
   <form class="search" method="get" action="/search"><input name="q" placeholder="ابحث في درايف" value="<?= htmlspecialchars($search) ?>"/></form>
   <div class="header-icons"><span>?</span><span>⚙</span></div>
   <div class="profile"><img width="38" height="38" src="<?= htmlspecialchars($user['avatar'] ?: '/public/myimg.png') ?>" alt="avatar"/><span><?= htmlspecialchars($user['name']) ?></span><a class="header-logout" href="/logout">خروج</a></div>
@@ -989,7 +987,7 @@ Total files: ${info.files}`);
 
     <div class="storage-card">
       <div class="storage-bar"><span style="width: <?= $usedPercent ?>%"></span></div>
-      <p>تم استخدام <?= format_bytes($storage) ?> من إجمالي 1 TB</p>
+      <p>تم استخدام <?= format_bytes($storage) ?> من إجمالي 1 تيرابايت</p>
       <button type="button">الحصول على مساحة تخزين إضافية</button>
     </div>
 
@@ -1000,7 +998,7 @@ Total files: ${info.files}`);
     <?php if ($dbError): ?><div class="flash error">خطأ قاعدة البيانات: <?= htmlspecialchars($dbError) ?></div><?php endif; ?>
     <?php if ($flash): ?><div class="flash <?= $flash['type'] ?>"><?= htmlspecialchars($flash['msg']) ?></div><?php endif; ?>
 
-    <div id="uploadProgress" class="progress hidden"><div id="uploadProgressBar"></div><p id="uploadProgressText">0%</p><p id="uploadSpeedText">0 MB/s</p></div>
+    <div id="uploadProgress" class="progress hidden"><div id="uploadProgressBar"></div><p id="uploadProgressText">0%</p><p id="uploadSpeedText">0 م.ب/ث</p></div>
 
     <div class="section-head"><h2><?= htmlspecialchars($pageTitle) ?></h2><div>☰ ⓘ</div></div>
     <div id="selectionBar" class="selection-bar hidden">
@@ -1014,7 +1012,7 @@ Total files: ${info.files}`);
       </div>
     </div>
 
-    <h4 class="recent-title">Recents</h4>
+    <h4 class="recent-title">الأحدث</h4>
 
     <div class="folders-grid">
       <?php foreach ($folders as $fd): ?>
@@ -1067,7 +1065,7 @@ Total files: ${info.files}`);
   <form id="uploadForm" method="post" enctype="multipart/form-data">
     <input type="hidden" name="action" value="upload_ajax"/><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"/><input type="hidden" name="folder_id" value="<?= $route==='folder'?(int)$currentFolderId:'' ?>"/>
     <input id="singleFile" type="file" name="file" required>
-    <small>الحد الأقصى للملف الواحد: 5 GB</small>
+    <small>الحد الأقصى للملف الواحد: 5 جيجابايت</small>
     <button type="submit">رفع الملف</button>
   </form></div></div>
 
@@ -1157,7 +1155,7 @@ uploadForm?.addEventListener('submit',(e)=>{
   pWrap.classList.remove('hidden');
   pBar.style.width='0%';
   pText.textContent='0%';
-  pSpeed.textContent='0 MB/s';
+  pSpeed.textContent='0 م.ب/ث';
 
   const fd=new FormData(uploadForm);
   const xhr=new XMLHttpRequest();
@@ -1175,7 +1173,7 @@ uploadForm?.addEventListener('submit',(e)=>{
       const deltaBytes = ev.loaded - lastLoaded;
       const deltaSec = Math.max((now - lastTime)/1000, 0.001);
       const speedMB = (deltaBytes / deltaSec) / (1024*1024);
-      pSpeed.textContent = speedMB.toFixed(2) + ' MB/s';
+      pSpeed.textContent = speedMB.toFixed(2) + ' م.ب/ث';
       lastLoaded = ev.loaded;
       lastTime = now;
     }
