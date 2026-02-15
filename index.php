@@ -386,7 +386,14 @@ elseif ($segments[0] === 'starred') $route = 'starred';
 elseif ($segments[0] === 'trash') $route = 'trash';
 elseif ($segments[0] === 'search') $route = 'search';
 elseif ($segments[0] === 'folders' && isset($segments[1])) { $route = 'folder'; $currentFolderId = (int)$segments[1]; }
-elseif ($segments[0] === 'admin') $route = 'admin';
+elseif ($segments[0] === 'admin') {
+    $route = 'admin';
+    if (isset($segments[1])) {
+        if ($segments[1] === 'files') $route = 'admin_files';
+        elseif ($segments[1] === 'images') $route = 'admin_images';
+        elseif ($segments[1] === 'settings') $route = 'admin_settings';
+    }
+}
 
 $flash = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -623,7 +630,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $user = $_SESSION['user'] ?? null;
 if ($route !== 'login') require_login();
-if ($route === 'admin') require_admin($config);
+if (str_starts_with($route, 'admin')) require_admin($config);
 
 $files = [];
 $folders = [];
@@ -640,7 +647,7 @@ $adminUploadsByMonth = [];
 $adminImageFiles = [];
 $allowedExtDisplay = '*';
 
-if ($user && $route === 'admin' && $pdo) {
+if ($user && str_starts_with($route, 'admin') && $pdo) {
     $adminStats = [
         'files' => (int)$pdo->query('SELECT COUNT(*) FROM files')->fetchColumn(),
         'users' => (int)$pdo->query('SELECT COUNT(DISTINCT user_id) FROM files')->fetchColumn(),
@@ -729,7 +736,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
   </section>
   <img src="/public/login.gif" class="hero" alt="login" />
 </main>
-<?php elseif ($route === 'admin'): ?>
+<?php elseif (str_starts_with($route, 'admin')): ?>
 <?php
   $countryMap = [];
   foreach ($adminCountryStats as $row) {
@@ -753,8 +760,8 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
   }
 ?>
 <style>
-.admin-shell{display:grid;grid-template-columns:250px 1fr;min-height:calc(100vh - 0px)}
-.admin-side{background:#1f2933;color:#d5dbe2;padding:18px 14px}
+.admin-shell{display:grid;grid-template-columns:270px 1fr;gap:14px;min-height:calc(100vh - 0px);padding:14px}
+.admin-side{background:#1f2933;color:#d5dbe2;padding:18px 14px;border-radius:14px;border:1px solid #2e3743;box-shadow:0 10px 24px #00000022}
 .admin-side h2{margin:0 0 16px;font-size:30px;color:#fff}
 .admin-side a{display:block;color:#d5dbe2;text-decoration:none;padding:10px 8px;border-radius:8px;margin-bottom:4px}
 .admin-side a:hover,.admin-side a.active{background:#323f4b}
@@ -778,11 +785,10 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
 <div class="admin-shell">
   <aside class="admin-side">
     <h2>Uploady</h2>
-    <a class="active" href="/admin">📊 Dashboard</a>
-    <a href="#files">📁 Manage Files</a>
-    <a href="#images">🖼 Review Images</a>
-    <a href="#users">👥 Manage Users</a>
-    <a href="#settings">⚙ Edit Settings</a>
+    <a class="<?= $route==='admin'?'active':'' ?>" href="/admin">📊 Dashboard</a>
+    <a class="<?= $route==='admin_files'?'active':'' ?>" href="/admin/files">📁 Manage Files</a>
+    <a class="<?= $route==='admin_images'?'active':'' ?>" href="/admin/images">🖼 Review Images</a>
+    <a class="<?= $route==='admin_settings'?'active':'' ?>" href="/admin/settings">⚙ Edit Settings</a>
     <a href="/drive">↩ العودة للدرايف</a>
     <a href="/logout">🚪 خروج</a>
   </aside>
@@ -793,6 +799,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
       <div><?= htmlspecialchars($user['name']) ?></div>
     </div>
 
+    <?php if ($route === "admin"): ?>
     <section class="stat-grid">
       <div class="stat blue"><b><?= (int)$adminStats['files'] ?></b> Total Files</div>
       <div class="stat red"><b><?= (int)$adminStats['users'] ?></b> Total Uploaders</div>
@@ -811,7 +818,9 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
         <div id="worldMapChart" class="world-map"></div>
       </div>
     </section>
+    <?php endif; ?>
 
+    <?php if ($route === "admin" || $route === "admin_settings"): ?>
     <section class="panel" id="settings">
       <h3>Allowed Upload Extensions</h3>
       <form method="post" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -835,7 +844,9 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
         <button type="submit" style="background:#b91c1c;color:#fff">Purge User</button>
       </form>
     </section>
+    <?php endif; ?>
 
+    <?php if ($route === "admin_files"): ?>
     <section class="panel" id="files" style="overflow:auto">
       <h3>Latest Files / Bulk Actions</h3>
       <form method="post" id="adminBulkForm">
@@ -877,7 +888,9 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
         </table>
       </form>
     </section>
+    <?php endif; ?>
 
+    <?php if ($route === "admin_images"): ?>
     <section class="panel" id="images">
       <h3>Image Moderation (5 per row)</h3>
       <div class="image-grid">
@@ -892,6 +905,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
         <?php endforeach; ?>
       </div>
     </section>
+    <?php endif; ?>
   </main>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -1239,9 +1253,7 @@ function submitCmd(cmd, el){
     return;
   }
   if(cmd==='info'){
-    alert('الاسم: '+(el.dataset.name||'-')+'
-المعرف: '+(id||'-')+'
-النوع: '+type);
+    alert(`الاسم: ${el.dataset.name||'-'}\nالمعرف: ${id||'-'}\nالنوع: ${type}`);
     return;
   }
   if(cmd==='rename'){
