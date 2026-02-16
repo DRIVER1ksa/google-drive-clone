@@ -283,7 +283,7 @@ function render_download_page(array $file, string $downloadUrl, bool $isShared=f
       </div>
     </main>
     <footer class='footer'>جميع الحقوق محفوظة - سيف درايف</footer>
-    <script>
+<script>
       let c=8;const el=document.getElementById('count');const b=document.getElementById('dlBtn');
       const finalUrl={$downloadUrlJs};
       const t=setInterval(()=>{c--;el.textContent=c;if(c<=0){clearInterval(t);b.classList.add('active');b.innerHTML=`<i class='fa-solid fa-download'></i> <span>لتحميل الملف انقر هنا</span>`;b.href=finalUrl;}},1000);
@@ -1044,6 +1044,7 @@ function drawRegionsMap() {
         <button type="button" data-select-cmd="copy">🔗 نسخ الرابط</button>
         <button type="button" data-select-cmd="delete">🗑 نقل للمهملات</button>
       </div>
+      <div id="selectionMeta" class="selection-meta"></div>
     </div>
 
     <div id="selectionSurface" class="selection-surface">
@@ -1060,9 +1061,9 @@ function drawRegionsMap() {
     <div class="files-grid">
       <?php if (!$files): ?><div class="empty">لا توجد ملفات.</div><?php endif; ?>
       <?php foreach ($files as $f): ?>
-      <div class="file-grid-card folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
+      <div class="file-grid-card folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>" data-starred="<?= !empty($f['is_starred']) ? '1':'0' ?>">
         <a href="<?= htmlspecialchars(file_url($f)) ?>" target="_blank" class="file-grid-thumb-link">
-          <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" loading="lazy" decoding="async" />
+          <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" />
           <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
         </a>
         <strong><?= htmlspecialchars($f['filename']) ?></strong>
@@ -1107,13 +1108,14 @@ function drawRegionsMap() {
 </div></div>
 
 <div id="ctxMenu" class="ctx-menu hidden">
+  <div id="ctxMeta" class="ctx-meta">لا يوجد تحديد</div>
   <button data-cmd="open"><span>فتح باستخدام</span><b>✦</b></button>
   <button data-cmd="download"><span>تنزيل</span><b>⤓</b></button>
   <button data-cmd="rename"><span>إعادة تسمية</span><b>✎</b></button>
   <button data-cmd="copy"><span>إنشاء نسخة / نسخ الرابط</span><b>⧉</b></button>
   <hr>
-  <button data-cmd="share"><span>مشاركة</span><b>👥</b></button>
-  <button data-cmd="star"><span>تمييز/إزالة من المميزة</span><b>⭐</b></button>
+  <button id="ctxShareBtn" data-cmd="share"><span>مشاركة</span><b>👥</b></button>
+  <button id="ctxStarBtn" data-cmd="star"><span>تمييز/إزالة من المميزة</span><b>⭐</b></button>
   <button data-cmd="move"><span>تنظيم</span><b>🗂</b></button>
   <button data-cmd="info"><span>معلومات الملف</span><b>ⓘ</b></button>
   <hr>
@@ -1123,6 +1125,8 @@ function drawRegionsMap() {
 <form id="cmdForm" method="post" class="hidden">
   <input type="hidden" name="action" id="cmdAction"><input type="hidden" name="id" id="cmdId"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><input type="hidden" name="new_name" id="cmdName">
 </form>
+
+<div id="toastRoot" class="toast-root" aria-live="polite" aria-atomic="true"></div>
 
 <script>
 const MAX_FILE = 5 * 1024 * 1024 * 1024;
@@ -1164,7 +1168,7 @@ uploadForm?.addEventListener('submit',(e)=>{
   e.preventDefault();
   if(!singleFile.files.length) return;
   const f=singleFile.files[0];
-  if(f.size>MAX_FILE){ alert('الملف أكبر من 5 جيجابايت.'); return; }
+  if(f.size>MAX_FILE){ showToast('الملف أكبر من 5 جيجابايت.','warn'); return; }
 
   document.getElementById('uploadModal')?.classList.add('hidden');
   pWrap.classList.remove('hidden');
@@ -1200,10 +1204,10 @@ uploadForm?.addEventListener('submit',(e)=>{
       location.reload();
     } else {
       pWrap.classList.add('hidden');
-      try{const j=JSON.parse(xhr.responseText); alert(j.message||'فشل الرفع');}catch(_){alert('فشل الرفع');}
+      try{const j=JSON.parse(xhr.responseText); showToast(j.message||'فشل الرفع','warn');}catch(_){showToast('فشل الرفع','warn');}
     }
   };
-  xhr.onerror=()=>{ pWrap.classList.add('hidden'); alert('فشل الاتصال أثناء الرفع.'); };
+  xhr.onerror=()=>{ pWrap.classList.add('hidden'); showToast('فشل الاتصال أثناء الرفع.','warn'); };
   xhr.send(fd);
 });
 
@@ -1216,6 +1220,11 @@ const shareAccessSelect=document.getElementById('shareAccessSelect');
 const shareNote=document.getElementById('shareNote');
 const shareCopyBtn=document.getElementById('shareCopyBtn');
 const shareDoneBtn=document.getElementById('shareDoneBtn');
+const selectionMeta=document.getElementById('selectionMeta');
+const ctxMeta=document.getElementById('ctxMeta');
+const ctxShareBtn=document.getElementById('ctxShareBtn');
+const ctxStarBtn=document.getElementById('ctxStarBtn');
+const toastRoot=document.getElementById('toastRoot');
 let currentTarget=null;
 let selectedItems=[];
 
@@ -1225,14 +1234,61 @@ function setSelected(items){
   selectedItems.forEach(el=>el.classList.add('is-selected'));
   selectionCount.textContent=String(selectedItems.length);
   if(selectionBar) selectionBar.classList.toggle('hidden', selectedItems.length===0);
+  updateSelectionMeta();
 }
 function pickOne(el){ setSelected([el]); currentTarget=el; }
 function getPrimary(){ return currentTarget || selectedItems[0] || null; }
+
+function showToast(message, tone='info'){
+  if(!toastRoot) return;
+  const el=document.createElement('div');
+  el.className='toast toast-'+tone;
+  el.textContent=message;
+  toastRoot.appendChild(el);
+  requestAnimationFrame(()=>el.classList.add('show'));
+  setTimeout(()=>{ el.classList.remove('show'); setTimeout(()=>el.remove(),180); }, 2600);
+}
+
+function isShared(el){ return !!el?.dataset?.shareUrl; }
+function isStarred(el){ return (el?.dataset?.starred||'0')==='1'; }
+
+function updateSelectionMeta(){
+  if(!selectionMeta){ return; }
+  if(!selectedItems.length){ selectionMeta.textContent=''; return; }
+  if(selectedItems.length>1){
+    const fileCount=selectedItems.filter(x=>x.dataset.type==='file').length;
+    selectionMeta.textContent=`التحديد الحالي: ${fileCount} ملف.`;
+    return;
+  }
+  const el=selectedItems[0];
+  if(el.dataset.type!=='file'){
+    selectionMeta.textContent='العنصر المحدد مجلد.';
+    return;
+  }
+  selectionMeta.textContent=`الحالة: ${isShared(el)?'مشترك':'غير مشترك'} • ${isStarred(el)?'في المفضلة':'غير مميز'}`;
+}
+
+function updateContextMenuState(el){
+  if(!el){ return; }
+  const file = el.dataset.type==='file';
+  const shared = file && isShared(el);
+  const starred = file && isStarred(el);
+  if(ctxMeta){
+    ctxMeta.textContent = file
+      ? `الحالة: ${shared?'مشترك':'غير مشترك'} • ${starred?'في المفضلة':'غير مميز'}`
+      : 'المجلد لا يدعم التمييز/المشاركة المباشرة.';
+  }
+  const shareSpan=ctxShareBtn?.querySelector('span');
+  if(shareSpan) shareSpan.textContent = file ? (shared ? 'إدارة المشاركة (مشترك)' : 'مشاركة (غير مشترك)') : 'مشاركة';
+  const starSpan=ctxStarBtn?.querySelector('span');
+  if(starSpan) starSpan.textContent = file ? (starred ? 'إزالة من المميزة (في المفضلة)' : 'إضافة إلى المميزة (غير مميزة)') : 'تمييز/إزالة من المميزة';
+}
 
 function openMenu(ev, el){
   ev.preventDefault();
   if(!selectedItems.includes(el)) pickOne(el);
   currentTarget=el;
+  updateContextMenuState(el);
   const pad=10;
   const menuW=260, menuH=330;
   const left=Math.min(ev.clientX, window.innerWidth-menuW-pad);
@@ -1243,11 +1299,13 @@ function openMenu(ev, el){
 }
 
 function openShareDialog(el){
-  if(!el || el.dataset.type!=='file'){ alert('المشاركة متاحة للملفات فقط.'); return; }
+  if(!el || el.dataset.type!=='file'){ showToast('المشاركة متاحة للملفات فقط.','warn'); return; }
   shareTitle.textContent='مشاركة "'+(el.dataset.name||'ملف')+'"';
   const isShared=!!el.dataset.shareUrl;
   shareAccessSelect.value=isShared?'public':'private';
   shareNote.textContent=isShared?'أي شخص لديه الرابط يمكنه الوصول.':'لا يمكن إلا للأشخاص الذين لديهم إذن الوصول.';
+  updateContextMenuState(el);
+  updateSelectionMeta();
   shareModal.classList.remove('hidden');
 }
 
@@ -1277,7 +1335,7 @@ async function submitCmd(cmd, el){
     return;
   }
   if(cmd==='info'){
-    alert(`الاسم: ${el.dataset.name||'-'}\nالمعرف: ${id||'-'}\nالنوع: ${type}`);
+    showToast(`الملف: ${el.dataset.name||'-'} • النوع: ${type}`,'info');
     return;
   }
   if(cmd==='rename'){
@@ -1294,14 +1352,18 @@ async function submitCmd(cmd, el){
   }
   if(cmd==='share' && type==='file'){ openShareDialog(el); return; }
   if(cmd==='star'){
-    if(type!=='file'){ alert('التمييز متاح للملفات فقط.'); return; }
-    await postAction('toggle_star',{id:id});
+    if(type!=='file'){ showToast('التمييز متاح للملفات فقط.','warn'); return; }
+    const res=await postAction('toggle_star',{id:id});
+    el.dataset.starred = res.starred ? '1':'0';
+    updateSelectionMeta();
+    updateContextMenuState(el);
+    showToast(res.starred ? 'تمت الإضافة إلى المفضلة' : 'تمت الإزالة من المفضلة','success');
     return;
   }
   if(cmd==='copy' && type==='file'){
     const url=el.dataset.shareUrl;
-    if(!url){ alert('الملف غير مشارك. استخدم نافذة المشاركة أولاً.'); return; }
-    navigator.clipboard.writeText(window.location.origin+url); alert('تم نسخ رابط المشاركة');
+    if(!url){ showToast('الملف غير مشارك حالياً.','warn'); return; }
+    navigator.clipboard.writeText(window.location.origin+url); showToast('تم نسخ رابط المشاركة','success');
   }
   if(cmd==='delete'){
     await postAction((type==='file'?'trash':'delete_folder'), {id:id});
@@ -1313,6 +1375,7 @@ document.querySelectorAll('[data-type]').forEach(el=>{
   el.classList.add('selectable-item');
   el.addEventListener('click',(e)=>{
     if(e.target.closest('button,form,.star')) return;
+    if(e.target.closest('a[href]')) e.preventDefault();
     if(e.metaKey || e.ctrlKey){
       const next=selectedItems.includes(el)?selectedItems.filter(x=>x!==el):[...selectedItems, el];
       setSelected(next);
@@ -1320,10 +1383,6 @@ document.querySelectorAll('[data-type]').forEach(el=>{
       pickOne(el);
     }
     if(el.tagName==='A') e.preventDefault();
-  });
-  el.addEventListener('dblclick',(e)=>{
-    const a=(el.tagName==='A')?el:el.querySelector('a[href]');
-    if(a){ window.open(a.href,'_blank'); }
   });
   el.addEventListener('contextmenu',(e)=>openMenu(e, el));
 });
@@ -1394,21 +1453,19 @@ document.querySelectorAll('[data-select-cmd]').forEach(btn=>btn.addEventListener
   const primary=getPrimary();
   if(!primary) return;
   if(selectedItems.length>1 && ['rename','move','share'].includes(cmd)){
-    alert('هذه العملية متاحة لعنصر واحد فقط حالياً.');
+    showToast('هذه العملية متاحة لعنصر واحد فقط حالياً.','warn');
     return;
   }
   if(cmd==='star' && selectedItems.length>1){
     const filesOnly=selectedItems.filter(el=>el.dataset.type==='file');
-    if(!filesOnly.length){ alert('اختر ملفات أولاً.'); return; }
+    if(!filesOnly.length){ showToast('اختر ملفات أولاً.','warn'); return; }
     try {
       for(const el of filesOnly){ await submitCmd('star', el); }
-      window.location.reload();
-    } catch (e) { alert(e.message); }
+      showToast('تم تحديث حالة المفضلة للعناصر المحددة','success');
+    } catch (e) { showToast(e.message,'warn'); }
     return;
   }
-  submitCmd(cmd, primary)
-    .then(()=>{ if(cmd==='star') window.location.reload(); })
-    .catch(e=>alert(e.message));
+  submitCmd(cmd, primary).catch(e=>showToast(e.message,'warn'));
 }));
 
 shareAccessSelect?.addEventListener('change',()=>{
@@ -1417,16 +1474,18 @@ shareAccessSelect?.addEventListener('change',()=>{
 });
 shareCopyBtn?.addEventListener('click', async ()=>{
   const primary=getPrimary();
-  if(!primary || primary.dataset.type!=='file'){ alert('اختر ملفاً أولاً.'); return; }
+  if(!primary || primary.dataset.type!=='file'){ showToast('اختر ملفاً أولاً.','warn'); return; }
   if(!primary.dataset.shareUrl){
-    if(confirm('الملف غير مشارك. تفعيل المشاركة الآن؟')){
-      const res=await postAction('toggle_share_file',{id:primary.dataset.id});
-      primary.dataset.shareUrl=res.share_url||'';
-    }
+    const res=await postAction('toggle_share_file',{id:primary.dataset.id});
+    primary.dataset.shareUrl=res.share_url||'';
+    primary.dataset.shared=primary.dataset.shareUrl?'1':'0';
+    updateSelectionMeta();
+    updateContextMenuState(primary);
+    showToast('تم تحديث حالة المشاركة','success');
     return;
   }
   navigator.clipboard.writeText(window.location.origin + primary.dataset.shareUrl);
-  alert('تم نسخ الرابط');
+  showToast('تم نسخ الرابط','success');
 });
 shareDoneBtn?.addEventListener('click',()=>shareModal.classList.add('hidden'));
 
@@ -1434,7 +1493,7 @@ ctxMenu?.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',(e
   e.stopPropagation();
   const primary=getPrimary();
   if(!primary) return;
-  submitCmd(btn.dataset.cmd, primary).catch(e=>alert(e.message));
+  submitCmd(btn.dataset.cmd, primary).catch(e=>showToast(e.message,'warn'));
 }));
 </script>
 <?php endif; ?>
