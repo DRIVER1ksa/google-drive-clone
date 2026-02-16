@@ -1078,22 +1078,22 @@ function drawRegionsMap() {
     <div id="selectionSurface" class="selection-surface">
     <div class="folders-grid">
       <?php foreach ($folders as $fd): ?>
-      <a href="/folders/<?= (int)$fd['id'] ?>" class="folder-card" data-type="folder" data-id="<?= (int)$fd['id'] ?>" data-name="<?= htmlspecialchars($fd['name']) ?>">
+      <div class="folder-card" data-type="folder" data-id="<?= (int)$fd['id'] ?>" data-name="<?= htmlspecialchars($fd['name']) ?>" data-href="/folders/<?= (int)$fd['id'] ?>">
         <?php if (!empty($fd['preview_image'])): ?><img src="/<?= htmlspecialchars($fd['preview_image']) ?>" alt="preview" />
         <?php else: ?><div class="folder-placeholder">📁</div><?php endif; ?>
         <strong><?= htmlspecialchars($fd['name']) ?></strong>
-      </a>
+      </div>
       <?php endforeach; ?>
 
     </div>
     <div class="files-grid" id="filesGrid">
       <?php if (!$files): ?><div class="empty">لا توجد ملفات.</div><?php endif; ?>
       <?php foreach ($files as $f): ?>
-      <div class="file-grid-card folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
-        <a href="<?= htmlspecialchars(file_url($f)) ?>" class="file-grid-thumb-link">
+      <div class="file-grid-card folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-file-url="<?= htmlspecialchars(file_url($f)) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
+        <div class="file-grid-thumb-link">
           <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" />
           <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
-        </a>
+        </div>
         <strong><?= htmlspecialchars($f['filename']) ?></strong>
         <small><?= format_bytes((int)$f['size_bytes']) ?> • <?= htmlspecialchars((string)$f['created_at']) ?></small>
       </div>
@@ -1457,14 +1457,20 @@ async function postAction(action, payload={}){
   return j;
 }
 
+
+function getFileUrl(el){
+  if(!el) return '';
+  return el.dataset.fileUrl || el.querySelector('[data-file-url]')?.dataset.fileUrl || '';
+}
+
 async function submitCmd(cmd, el){
   if(!el) return;
   const type=el.dataset.type;
   const id=el.dataset.id;
     if(cmd==='download'){
     if(type!=='file') return;
-    const a=(el.tagName==='A')?el:el.querySelector('a[href]');
-    if(a) window.open(a.href + (a.href.includes('?')?'&':'?')+'download=1','_blank');
+    const fileUrl=getFileUrl(el);
+    if(fileUrl) window.open(fileUrl + (fileUrl.includes('?')?'&':'?')+'download=1','_blank');
     return;
   }
   if(cmd==='info'){
@@ -1501,7 +1507,6 @@ async function submitCmd(cmd, el){
 document.querySelectorAll('[data-type]').forEach(el=>{
   el.classList.add('selectable-item');
   el.addEventListener('click',(e)=>{
-    if(el.dataset.type==='file' && e.target.closest('a[href]')) e.preventDefault();
     if(e.target.closest('button,form,.star')) return;
     if(e.metaKey || e.ctrlKey){
       const next=selectedItems.includes(el)?selectedItems.filter(x=>x!==el):[...selectedItems, el];
@@ -1509,8 +1514,10 @@ document.querySelectorAll('[data-type]').forEach(el=>{
     } else {
       pickOne(el);
     }
-    if(el.dataset.type==='folder' && el.tagName==='A' && !e.metaKey && !e.ctrlKey){ window.location.href=el.href; return; }
-    if(el.dataset.type==='file' && el.tagName==='A') e.preventDefault();
+    if(el.dataset.type==='folder' && !e.metaKey && !e.ctrlKey){
+      const href=el.dataset.href||'';
+      if(href){ window.location.href=href; return; }
+    }
   });
   el.addEventListener('contextmenu',(e)=>openMenu(e, el));
 });
@@ -1586,8 +1593,8 @@ document.querySelectorAll('[data-select-cmd]').forEach(btn=>btn.addEventListener
   if(cmd==='download'){
     if(!filesOnly.length){ showToast('التنزيل متاح للملفات فقط.','warn'); return; }
     for(const el of filesOnly){
-      const a=(el.tagName==='A')?el:el.querySelector('a[href]');
-      if(a) window.open(a.href + (a.href.includes('?')?'&':'?')+'download=1','_blank');
+      const fileUrl=getFileUrl(el);
+      if(fileUrl) window.open(fileUrl + (fileUrl.includes('?')?'&':'?')+'download=1','_blank');
     }
     showToast(`بدأ تنزيل ${filesOnly.length} ملف`,'success');
     return;
