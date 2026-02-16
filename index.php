@@ -339,7 +339,7 @@ if (!empty($segments[0]) && $segments[0] === 's' && isset($segments[1])) {
     header('Content-Length: ' . $fsize);
     header('ETag: ' . $etag);
     header('Last-Modified: ' . gmdate('D, d M Y H:i:s', $mtime) . ' GMT');
-    if (str_starts_with((string)$mimeOut, 'image/')) header('Cache-Control: private, max-age=86400');
+    if (str_starts_with((string)$mimeOut, 'image/')) header('Cache-Control: private, max-age=604800, immutable');
     else header('Cache-Control: private, max-age=3600');
     $disp = $downloadFlag ? 'attachment' : 'inline';
     header("Content-Disposition: {$disp}; filename*=UTF-8''" . rawurlencode($file['filename']));
@@ -378,7 +378,7 @@ if (!empty($segments[0]) && $segments[0] === 'd' && isset($segments[1])) {
     header('Content-Length: ' . $fsize);
     header('ETag: ' . $etag);
     header('Last-Modified: ' . gmdate('D, d M Y H:i:s', $mtime) . ' GMT');
-    if (str_starts_with((string)$mimeOut, 'image/')) header('Cache-Control: private, max-age=86400');
+    if (str_starts_with((string)$mimeOut, 'image/')) header('Cache-Control: private, max-age=604800, immutable');
     else header('Cache-Control: private, max-age=3600');
     $disp = $downloadFlag ? 'attachment' : 'inline';
     header("Content-Disposition: {$disp}; filename*=UTF-8''" . rawurlencode($file['filename']));
@@ -397,7 +397,6 @@ $currentFolderId = null;
 if (empty($segments)) $route = empty($_SESSION['user']) ? 'login' : 'drive';
 elseif ($segments[0] === 'login') $route = 'login';
 elseif ($segments[0] === 'drive' || $segments[0] === 'home') $route = 'drive';
-elseif ($segments[0] === 'recent') $route = 'recent';
 elseif ($segments[0] === 'starred') $route = 'starred';
 elseif ($segments[0] === 'trash') $route = 'trash';
 elseif ($segments[0] === 'search') $route = 'search';
@@ -642,6 +641,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $rf = $qf->fetch();
                 $payload['share_url'] = (!empty($rf['shared_token']) && !empty($rf['filename'])) ? share_url((string)$rf['shared_token'], (string)$rf['filename']) : null;
             }
+            if ($action === 'toggle_star') {
+                $fid = (int)($_POST['id'] ?? 0);
+                $qf = $pdo->prepare('SELECT is_starred FROM files WHERE id=? AND user_id=? LIMIT 1');
+                $qf->execute([$fid, $user['id']]);
+                $payload['starred'] = (int)($qf->fetchColumn() ?: 0) === 1;
+            }
             header('Content-Type: application/json; charset=utf-8');
             echo json_encode($payload);
             exit;
@@ -734,7 +739,7 @@ if ($user && $route !== 'login' && !str_starts_with($route, 'admin') && $pdo) {
     $st->execute();
     $files = $st->fetchAll();
 
-    $map = ['drive'=>'ملفاتي','recent'=>'الأحدث','starred'=>'المميزة','trash'=>'سلة المحذوفات','search'=>'نتائج البحث','folder'=>'مجلد'];
+    $map = ['drive'=>'ملفاتي','starred'=>'المميزة','trash'=>'سلة المحذوفات','search'=>'نتائج البحث','folder'=>'مجلد'];
     $pageTitle = $map[$route] ?? 'ملفاتي';
 }
 
@@ -1008,18 +1013,15 @@ function drawRegionsMap() {
 
     <nav>
       <a href="/drive" class="<?= $route==='drive'?'active':'' ?>">📁 ملفاتي</a>
-      <a href="/recent" class="<?= $route==='recent'?'active':'' ?>">🕒 الأحدث</a>
       <a href="/starred" class="<?= $route==='starred'?'active':'' ?>">⭐ المميزة</a>
       <a href="/trash" class="<?= $route==='trash'?'active':'' ?>">🗑 سلة المحذوفات</a>
       <hr>
-      <a href="#" onclick="alert('الدعم قريباً');return false;">❓ المساعدة</a>
       <a href="#" onclick="return false;">☁️ التخزين</a>
     </nav>
 
     <div class="storage-card">
       <div class="storage-bar"><span style="width: <?= $usedPercent ?>%"></span></div>
       <p>تم استخدام <?= format_bytes($storage) ?> من إجمالي 1 تيرابايت</p>
-      <button type="button">الحصول على مساحة تخزين إضافية</button>
     </div>
 
     <a class="logout" href="/logout">خروج</a>
@@ -1038,13 +1040,13 @@ function drawRegionsMap() {
         <button type="button" data-select-cmd="download">⤓ تنزيل</button>
         <button type="button" data-select-cmd="rename">✎ إعادة تسمية</button>
         <button type="button" data-select-cmd="share">👥 مشاركة</button>
+        <button type="button" data-select-cmd="star">⭐ تمييز</button>
         <button type="button" data-select-cmd="copy">🔗 نسخ الرابط</button>
         <button type="button" data-select-cmd="delete">🗑 نقل للمهملات</button>
       </div>
     </div>
 
-    <h4 class="recent-title">الأحدث</h4>
-
+    <div id="selectionSurface" class="selection-surface">
     <div class="folders-grid">
       <?php foreach ($folders as $fd): ?>
       <a href="/folders/<?= (int)$fd['id'] ?>" class="folder-card" data-type="folder" data-id="<?= (int)$fd['id'] ?>" data-name="<?= htmlspecialchars($fd['name']) ?>">
@@ -1056,7 +1058,7 @@ function drawRegionsMap() {
 
       <?php foreach (array_slice($files, 0, 4) as $f): ?>
       <a href="<?= htmlspecialchars(file_url($f)) ?>" target="_blank" class="folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
-        <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" />
+        <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" loading="lazy" decoding="async" />
         <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
         <strong><?= htmlspecialchars($f['filename']) ?></strong>
       </a>
@@ -1067,13 +1069,16 @@ function drawRegionsMap() {
       <?php foreach ($files as $f): ?>
       <div class="file-grid-card folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
         <a href="<?= htmlspecialchars(file_url($f)) ?>" target="_blank" class="file-grid-thumb-link">
-          <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" />
+          <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" loading="lazy" decoding="async" />
           <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
         </a>
+        <button type="button" class="star <?= !empty($f['is_starred']) ? 'on' : '' ?>" data-star-toggle aria-label="تمييز">⭐</button>
         <strong><?= htmlspecialchars($f['filename']) ?></strong>
         <small><?= format_bytes((int)$f['size_bytes']) ?> • <?= htmlspecialchars((string)$f['created_at']) ?></small>
       </div>
       <?php endforeach; ?>
+    </div>
+    <div id="dragSelectionBox" class="drag-selection-box hidden" aria-hidden="true"></div>
     </div>
   </main>
 </div>
@@ -1116,6 +1121,7 @@ function drawRegionsMap() {
   <button data-cmd="copy"><span>إنشاء نسخة / نسخ الرابط</span><b>⧉</b></button>
   <hr>
   <button data-cmd="share"><span>مشاركة</span><b>👥</b></button>
+  <button data-cmd="star"><span>تمييز/إزالة من المميزة</span><b>⭐</b></button>
   <button data-cmd="move"><span>تنظيم</span><b>🗂</b></button>
   <button data-cmd="info"><span>معلومات الملف</span><b>ⓘ</b></button>
   <hr>
@@ -1295,6 +1301,12 @@ async function submitCmd(cmd, el){
     el.remove();
   }
   if(cmd==='share' && type==='file'){ openShareDialog(el); return; }
+  if(cmd==='star' && type==='file'){
+    const res=await postAction('toggle_star',{id:id});
+    const on=!!res.starred;
+    el.querySelectorAll('[data-star-toggle]').forEach(btn=>btn.classList.toggle('on', on));
+    return;
+  }
   if(cmd==='copy' && type==='file'){
     const url=el.dataset.shareUrl;
     if(!url){ alert('الملف غير مشارك. استخدم نافذة المشاركة أولاً.'); return; }
@@ -1323,6 +1335,66 @@ document.querySelectorAll('[data-type]').forEach(el=>{
     if(a){ window.open(a.href,'_blank'); }
   });
   el.addEventListener('contextmenu',(e)=>openMenu(e, el));
+});
+
+
+document.querySelectorAll('[data-star-toggle]').forEach(btn=>btn.addEventListener('click',(e)=>{
+  e.preventDefault();
+  e.stopPropagation();
+  const card=btn.closest('[data-type="file"]');
+  if(!card) return;
+  pickOne(card);
+  submitCmd('star', card).catch(err=>alert(err.message));
+}));
+
+const selectionSurface=document.getElementById('selectionSurface');
+const dragSelectionBox=document.getElementById('dragSelectionBox');
+let dragState=null;
+
+function getRectFromPoints(a,b){
+  const left=Math.min(a.x,b.x);
+  const top=Math.min(a.y,b.y);
+  return {left, top, width:Math.abs(a.x-b.x), height:Math.abs(a.y-b.y)};
+}
+
+function intersects(r1,r2){
+  return !(r2.left>r1.left+r1.width || r2.left+r2.width<r1.left || r2.top>r1.top+r1.height || r2.top+r2.height<r1.top);
+}
+
+selectionSurface?.addEventListener('mousedown',(e)=>{
+  if(e.button!==0) return;
+  if(e.target.closest('[data-type],button,a,input,select,textarea,form,#ctxMenu,.modal-box')) return;
+  const surfaceRect=selectionSurface.getBoundingClientRect();
+  dragState={start:{x:e.clientX,y:e.clientY},surfaceRect};
+  dragSelectionBox.classList.remove('hidden');
+  dragSelectionBox.style.left=(e.clientX-surfaceRect.left+selectionSurface.scrollLeft)+'px';
+  dragSelectionBox.style.top=(e.clientY-surfaceRect.top+selectionSurface.scrollTop)+'px';
+  dragSelectionBox.style.width='0px';
+  dragSelectionBox.style.height='0px';
+  setSelected([]);
+  e.preventDefault();
+});
+
+document.addEventListener('mousemove',(e)=>{
+  if(!dragState || !selectionSurface || !dragSelectionBox) return;
+  const rect=getRectFromPoints(dragState.start,{x:e.clientX,y:e.clientY});
+  dragSelectionBox.style.left=(rect.left-dragState.surfaceRect.left+selectionSurface.scrollLeft)+'px';
+  dragSelectionBox.style.top=(rect.top-dragState.surfaceRect.top+selectionSurface.scrollTop)+'px';
+  dragSelectionBox.style.width=rect.width+'px';
+  dragSelectionBox.style.height=rect.height+'px';
+
+  const touched=[];
+  selectionSurface.querySelectorAll('[data-type]').forEach(el=>{
+    const r=el.getBoundingClientRect();
+    if(intersects(rect,{left:r.left,top:r.top,width:r.width,height:r.height})) touched.push(el);
+  });
+  setSelected(touched);
+});
+
+document.addEventListener('mouseup',()=>{
+  if(!dragState || !dragSelectionBox) return;
+  dragSelectionBox.classList.add('hidden');
+  dragState=null;
 });
 
 document.addEventListener('click',(e)=>{
