@@ -99,19 +99,30 @@ select{border-radius:10px;border:1px solid #d3d8e3;background:#fff;padding:0 10p
 .modern-left-menu button i{font-size:16px;opacity:.9;width:18px;text-align:center}
 .modern-left-menu hr{border:0;height:1px;background:#475468;margin:6px 0}
 
-.ShareDialog{max-width:760px;background:#f7f7f8;color:#1f2937;border:1px solid #d7dbe4;padding:26px}
+.ShareDialog{max-width:760px;background:#fff;color:#1f2937;border:1px solid #d7dbe4;padding:24px}
 .ShareDialog .close{background:#e5e7eb;color:#111827}
-.ShareDialog-title{margin:0 0 16px;font-size:40px;font-weight:500}
-.ShareDialog-itemInfo{font-size:32px;margin-bottom:14px}
+.ShareDialog-title{margin:0 0 12px;font-size:40px;font-weight:500}
+.ShareDialog-itemInfo{font-size:30px;margin-bottom:14px}
 .ShareDialog-itemInfo b{font-weight:700}
 .ShareDialog-disabledMessage,.ShareDialog-copyrightMessage,.ShareDialog-dmcaMessage,.ShareDialog-virusMessage{background:#fff3cd;color:#7c2d12;border:1px solid #fbbf24;border-radius:10px;padding:10px 12px;margin:8px 0;font-size:20px}
 .ShareDialog-links{margin-top:12px}
-.ShareDialog-inputGroup{display:flex;gap:8px}
-.ShareDialog-linkInput{height:52px;font-size:24px;border-radius:6px;border:1px solid #d1d5db;flex:1;padding:0 12px;background:#fff}
-.ShareDialog-copyBtn{height:52px;background:#1579ff;border:0;color:#fff;border-radius:6px;min-width:170px;font-size:20px}
-.ShareDialog-socialLinks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:14px}
-.ShareDialog-socialLinks a{height:46px;border-radius:999px;background:#fff;border:1px solid #d1d5db;display:flex;align-items:center;justify-content:center;gap:8px;font-size:16px;color:#1f2937;padding:0 12px}.ShareDialog-socialLinks a i{font-size:16px}
+.ShareDialog-inputGroup{display:flex;gap:0}
+.ShareDialog-linkInput{height:52px;font-size:24px;border-radius:4px 0 0 4px;border:1px solid #d1d5db;flex:1;padding:0 12px;background:#f3f4f6}
+.ShareDialog-copyBtn{height:52px;background:#1579ff;border:0;color:#fff;border-radius:0 4px 4px 0;min-width:190px;font-size:20px;display:flex;align-items:center;justify-content:center;gap:8px}
+.ShareDialog-socialLinks{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:14px;margin-top:18px}
+.ShareDialog-social{display:flex;flex-direction:column;align-items:center;gap:8px;color:#374151}.ShareDialog-socialIcon{width:62px;height:62px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:30px}.ShareDialog-socialLabel{font-size:16px;color:#374151}.ShareDialog-social:hover{transform:translateY(-1px)}
 .ShareDialog-disabledLinkOverlay{margin-top:10px;background:#eef2f7;border:1px dashed #9ca3af;border-radius:10px;padding:12px}
 .ShareDialog-enableLinkBtn{height:40px;border-radius:8px;background:#1a73e8;color:#fff;border:0}
 
 .ShareDialog-copyBtn i{margin-inline-start:6px}
+
+.ShareDialog-facebook .ShareDialog-socialIcon{background:#1877f2}
+.ShareDialog-x .ShareDialog-socialIcon{background:#374151}
+.ShareDialog-email .ShareDialog-socialIcon{background:#4b5563}
+.ShareDialog-reddit .ShareDialog-socialIcon{background:#ff4500}
+.ShareDialog-blogger .ShareDialog-socialIcon{background:#f29933}
+.ShareDialog-linkedin .ShareDialog-socialIcon{background:#0a66c2}
+.ShareDialog-whatsapp .ShareDialog-socialIcon{background:#25d366}
+.ShareDialog-telegram .ShareDialog-socialIcon{background:#229ed9}
+
+@media (max-width:900px){.ShareDialog-socialLinks{grid-template-columns:repeat(4,minmax(0,1fr))}}

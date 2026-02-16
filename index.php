@@ -752,7 +752,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>سيف درايف</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" integrity="sha512-dymI7Oq6fNQ2V+4CSkiqhSSjMBDlNIQP5CKEM5Qn2ATqNnS/xPbbGr3HdWu3UwG+329xNXmLKcKD5Vac/mswHw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+  <script src="https://kit.fontawesome.com/ff30351e57.js" crossorigin="anonymous"></script>
   <link rel="stylesheet" href="/public/assets/style.css?v=<?= $cssVersion ?>" />
 </head>
 <body>
@@ -1110,14 +1110,14 @@ function drawRegionsMap() {
       <button type="button" class="copy-link ShareDialog-copyBtn" id="shareCopyBtn"><i class="fas fa-link" aria-hidden="true"></i>نسخ الرابط</button>
     </div>
     <div class="ShareDialog-socialLinks" role="group" aria-label="روابط اجتماعية">
-      <a href="#" target="_blank" rel="noopener" id="shareFacebook" class="ShareDialog-facebook"><i class="fab fa-facebook-f" aria-hidden="true"></i><span>فيسبوك</span></a>
-      <a href="#" target="_blank" rel="noopener" id="shareX" class="ShareDialog-x"><i class="fab fa-twitter" aria-hidden="true"></i><span>X</span></a>
-      <a href="#" target="_blank" rel="noopener" id="shareEmail" class="ShareDialog-email"><i class="fas fa-envelope" aria-hidden="true"></i><span>البريد</span></a>
-      <a href="#" target="_blank" rel="noopener" id="shareReddit" class="ShareDialog-reddit"><i class="fab fa-reddit-alien" aria-hidden="true"></i><span>ريديت</span></a>
-      <a href="#" target="_blank" rel="noopener" id="shareBlogger" class="ShareDialog-blogger"><i class="fab fa-blogger-b" aria-hidden="true"></i><span>بلوجر</span></a>
-      <a href="#" target="_blank" rel="noopener" id="shareLinkedin" class="ShareDialog-linkedin"><i class="fab fa-linkedin-in" aria-hidden="true"></i><span>لينكدإن</span></a>
-      <a href="#" target="_blank" rel="noopener" id="shareWhatsapp" class="ShareDialog-whatsapp"><i class="fab fa-whatsapp" aria-hidden="true"></i><span>واتساب</span></a>
-      <a href="#" target="_blank" rel="noopener" id="shareTelegram" class="ShareDialog-telegram"><i class="fab fa-telegram-plane" aria-hidden="true"></i><span>تلغرام</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareFacebook" class="ShareDialog-social ShareDialog-facebook"><span class="ShareDialog-socialIcon"><i class="fab fa-facebook-f" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">فيسبوك</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareX" class="ShareDialog-social ShareDialog-x"><span class="ShareDialog-socialIcon"><i class="fa-brands fa-x-twitter" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">X</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareEmail" class="ShareDialog-social ShareDialog-email"><span class="ShareDialog-socialIcon"><i class="fas fa-envelope" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">البريد</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareReddit" class="ShareDialog-social ShareDialog-reddit"><span class="ShareDialog-socialIcon"><i class="fab fa-reddit-alien" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">ريديت</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareBlogger" class="ShareDialog-social ShareDialog-blogger"><span class="ShareDialog-socialIcon"><i class="fab fa-blogger-b" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">بلوجر</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareLinkedin" class="ShareDialog-social ShareDialog-linkedin"><span class="ShareDialog-socialIcon"><i class="fab fa-linkedin-in" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">لينكدإن</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareWhatsapp" class="ShareDialog-social ShareDialog-whatsapp"><span class="ShareDialog-socialIcon"><i class="fab fa-whatsapp" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">واتساب</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareTelegram" class="ShareDialog-social ShareDialog-telegram"><span class="ShareDialog-socialIcon"><i class="fab fa-telegram-plane" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">تلغرام</span></a>
     </div>
     <div class="ShareDialog-disabledLinkOverlay hidden" id="shareEnableWrap">
       <p>المشاركة معطلة حالياً لهذا الملف.</p>
