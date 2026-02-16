@@ -993,28 +993,26 @@ function drawRegionsMap() {
 </script>
 <?php else: ?>
 <header class="topbar">
-  <div class="brand"><span class="menu">☰</span><img src="/public/google-logo.png" alt=""/><span>درايف</span></div>
+  <div class="brand"><img src="/public/google-logo.png" alt=""/><span>درايف</span></div>
   <form class="search" method="get" action="/search"><input name="q" placeholder="ابحث في درايف" value="<?= htmlspecialchars($search) ?>"/></form>
-  <div class="header-icons"><span>?</span><span>⚙</span></div>
   <div class="profile"><img width="38" height="38" src="<?= htmlspecialchars($user['avatar'] ?: '/public/myimg.png') ?>" alt="avatar"/><span><?= htmlspecialchars($user['name']) ?></span><a class="header-logout" href="/logout">خروج</a></div>
 </header>
 
 <div class="layout">
-  <aside class="sidebar">
+  <aside class="sidebar modern-sidebar">
     <div class="new-wrap">
-      <button id="newBtn" class="new-btn" type="button">＋ جديد</button>
+      <button id="newBtn" class="new-btn" type="button"><i class="fas fa-plus"></i> جديد</button>
       <div id="newMenu" class="new-menu hidden">
-        <button type="button" data-open="uploadFiles">📄 تحميل ملف</button>
-        <button type="button" data-open="uploadFolderModal">📁 تحميل مجلد</button>
-        <button type="button" data-open="folderModal">📁 مجلد جديد</button>
+        <button type="button" data-open="uploadFiles"><i class="far fa-file"></i> تحميل ملف</button>
+        <button type="button" data-open="uploadFolderModal"><i class="far fa-folder"></i> تحميل مجلد</button>
+        <button type="button" data-open="folderModal"><i class="fas fa-folder-plus"></i> مجلد جديد</button>
       </div>
     </div>
 
-    <nav>
-      <a href="/drive" class="<?= $route==='drive'?'active':'' ?>">📁 ملفاتي</a>
-      <a href="/trash" class="<?= $route==='trash'?'active':'' ?>">🗑 سلة المحذوفات</a>
-      <hr>
-      <a href="#" onclick="return false;">☁️ التخزين</a>
+    <nav class="sidebar-nav">
+      <a href="/drive" class="<?= $route==='drive'?'active':'' ?>"><i class="far fa-folder-open"></i><span>ملفاتي</span></a>
+      <a href="/trash" class="<?= $route==='trash'?'active':'' ?>"><i class="far fa-trash-alt"></i><span>سلة المحذوفات</span></a>
+      <a href="#" onclick="return false;"><i class="fas fa-hdd"></i><span>التخزين</span></a>
     </nav>
 
     <div class="storage-card">
@@ -1022,7 +1020,7 @@ function drawRegionsMap() {
       <p>تم استخدام <?= format_bytes($storage) ?> من إجمالي 1 تيرابايت</p>
     </div>
 
-    <a class="logout" href="/logout">خروج</a>
+    <a class="logout" href="/logout"><i class="fas fa-sign-out-alt"></i> خروج</a>
   </aside>
 
   <main class="content">
@@ -1033,7 +1031,7 @@ function drawRegionsMap() {
     <input id="quickFileInput" type="file" multiple class="hidden" />
     <div id="dropUploadOverlay" class="drop-upload-overlay hidden"><div class="drop-upload-box">أفلت الملفات هنا لرفعها مباشرة</div></div>
 
-    <div class="section-head"><h2><?= htmlspecialchars($pageTitle) ?></h2><div>☰ ⓘ</div></div>
+    <div class="section-head"><h2><?= htmlspecialchars($pageTitle) ?></h2></div>
     <div id="selectionBar" class="selection-bar hidden">
       <div class="selection-count"><span id="selectionCount">0</span> تم اختيار ملف</div>
       <div class="selection-actions">
@@ -1068,7 +1066,6 @@ function drawRegionsMap() {
         </a>
         <strong><?= htmlspecialchars($f['filename']) ?></strong>
         <small><?= format_bytes((int)$f['size_bytes']) ?> • <?= htmlspecialchars((string)$f['created_at']) ?></small>
-        <button type="button" class="card-menu-trigger" data-menu-trigger>⋮</button>
       </div>
       <?php endforeach; ?>
     </div>
@@ -1110,7 +1107,6 @@ function drawRegionsMap() {
 <div id="shareModal" class="modal hidden"><div class="modal-box ShareDialog"><button class="close" data-close>×</button>
   <h1 class="ShareDialog-title">مشاركة الملف</h1>
   <div class="ShareDialog-itemInfo"><b id="shareFileName">-</b> (<span id="shareFileSize">-</span>)</div>
-  <div class="ShareDialog-disabledMessage hidden" id="shareDisabledMessage">لا يمكن مشاركة هذا الملف لأن المالك عطّل المشاركة.</div>
   <div class="ShareDialog-copyrightMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف لأنه محمي بحقوق النشر.</div>
   <div class="ShareDialog-dmcaMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف بسبب مطالبة DMCA.</div>
   <div class="ShareDialog-virusMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف لأنه يحتوي على فيروس.</div>
@@ -1129,10 +1125,6 @@ function drawRegionsMap() {
       <a href="#" target="_blank" rel="noopener" id="shareLinkedin" class="ShareDialog-social ShareDialog-linkedin"><span class="ShareDialog-socialIcon"><i class="fab fa-linkedin-in" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">لينكدإن</span></a>
       <a href="#" target="_blank" rel="noopener" id="shareWhatsapp" class="ShareDialog-social ShareDialog-whatsapp"><span class="ShareDialog-socialIcon"><i class="fab fa-whatsapp" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">واتساب</span></a>
       <a href="#" target="_blank" rel="noopener" id="shareTelegram" class="ShareDialog-social ShareDialog-telegram"><span class="ShareDialog-socialIcon"><i class="fab fa-telegram-plane" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">تلغرام</span></a>
-    </div>
-    <div class="ShareDialog-disabledLinkOverlay hidden" id="shareEnableWrap">
-      <p>المشاركة معطلة حالياً لهذا الملف.</p>
-      <button type="button" class="share-link-enable ShareDialog-enableLinkBtn" id="shareEnableBtn">تفعيل المشاركة</button>
     </div>
   </div>
 </div></div>
@@ -1264,14 +1256,28 @@ quickFileInput?.addEventListener('change', ()=>{
   quickFileInput.value='';
 });
 
+
+function hasRealFiles(dt){
+  if(!dt) return false;
+  if(dt.items && dt.items.length){
+    return [...dt.items].some(it=>it.kind==='file');
+  }
+  return !!(dt.files && dt.files.length);
+}
+
+document.querySelectorAll('.file-grid-card, .folder-card img, .file-grid-thumb-link').forEach(el=>{
+  el.setAttribute('draggable','false');
+  el.addEventListener('dragstart',(e)=>e.preventDefault());
+});
+
 let dragDepth=0;
 window.addEventListener('dragenter',(e)=>{
-  if(!e.dataTransfer?.types?.includes('Files')) return;
+  if(!hasRealFiles(e.dataTransfer)) return;
   dragDepth++;
   dropUploadOverlay?.classList.remove('hidden');
 });
 window.addEventListener('dragover',(e)=>{
-  if(!e.dataTransfer?.types?.includes('Files')) return;
+  if(!hasRealFiles(e.dataTransfer)) return;
   e.preventDefault();
 });
 window.addEventListener('dragleave',()=>{
@@ -1279,7 +1285,7 @@ window.addEventListener('dragleave',()=>{
   if(dragDepth===0) dropUploadOverlay?.classList.add('hidden');
 });
 window.addEventListener('drop',(e)=>{
-  if(!e.dataTransfer?.files?.length) return;
+  if(!hasRealFiles(e.dataTransfer)) return;
   e.preventDefault();
   dragDepth=0;
   dropUploadOverlay?.classList.add('hidden');
@@ -1294,9 +1300,6 @@ const shareFileName=document.getElementById('shareFileName');
 const shareFileSize=document.getElementById('shareFileSize');
 const shareLinkInput=document.getElementById('share-link-input');
 const shareCopyBtn=document.getElementById('shareCopyBtn');
-const shareEnableBtn=document.getElementById('shareEnableBtn');
-const shareEnableWrap=document.getElementById('shareEnableWrap');
-const shareDisabledMessage=document.getElementById('shareDisabledMessage');
 const shareFacebook=document.getElementById('shareFacebook');
 const shareX=document.getElementById('shareX');
 const shareEmail=document.getElementById('shareEmail');
@@ -1394,20 +1397,14 @@ async function openShareDialog(el){
   shareFileName.textContent=(el.dataset.name||'ملف');
   const sizeText=el.querySelector('small')?.textContent?.split('•')[0]?.trim()||'-';
   shareFileSize.textContent=sizeText;
-  let url=el.dataset.shareUrl||'';
-  if(!url){
-    shareEnableWrap.classList.remove('hidden');
-    shareDisabledMessage.classList.remove('hidden');
-    shareLinkInput.value='';
-  } else {
-    shareEnableWrap.classList.add('hidden');
-    shareDisabledMessage.classList.add('hidden');
-    const full=window.location.origin+url;
-    shareLinkInput.value=full;
-    buildShareLinks(full, el.dataset.name||'ملف');
-  }
+  const url=await ensureShareUrl(el);
+  if(!url){ showToast('تعذر إنشاء رابط مشاركة.','warn'); return; }
+  const full=window.location.origin+url;
+  shareLinkInput.value=full;
+  buildShareLinks(full, el.dataset.name||'ملف');
   shareModal.classList.remove('hidden');
 }
+
 
 async function postAction(action, payload={}){
   const fd=new FormData();
@@ -1465,28 +1462,17 @@ document.querySelectorAll('[data-type]').forEach(el=>{
   el.classList.add('selectable-item');
   el.addEventListener('click',(e)=>{
     if(e.target.closest('button,form,.star')) return;
-    if(e.target.closest('a[href]')) e.preventDefault();
     if(e.metaKey || e.ctrlKey){
       const next=selectedItems.includes(el)?selectedItems.filter(x=>x!==el):[...selectedItems, el];
       setSelected(next);
     } else {
       pickOne(el);
     }
-    if(el.tagName==='A') e.preventDefault();
+    if(el.dataset.type==='folder' && el.tagName==='A' && !e.metaKey && !e.ctrlKey){ window.location.href=el.href; return; }
+    if(el.dataset.type==='file' && el.tagName==='A') e.preventDefault();
   });
   el.addEventListener('contextmenu',(e)=>openMenu(e, el));
 });
-
-
-document.querySelectorAll('[data-menu-trigger]').forEach(btn=>btn.addEventListener('click',(e)=>{
-  e.preventDefault();
-  e.stopPropagation();
-  const card=btn.closest('[data-type]');
-  if(!card) return;
-  pickOne(card);
-  const r=btn.getBoundingClientRect();
-  openMenu({preventDefault:()=>{}, clientX:r.left, clientY:r.bottom}, card);
-}));
 
 const selectionSurface=document.getElementById('selectionSurface');
 const dragSelectionBox=document.getElementById('dragSelectionBox');
@@ -1639,19 +1625,6 @@ moveConfirmBtn?.addEventListener('click', async ()=>{
   setTimeout(()=>location.reload(), 300);
 });
 
-shareEnableBtn?.addEventListener('click', async ()=>{
-  const primary=getPrimary();
-  if(!primary || primary.dataset.type!=='file') return;
-  const url=await ensureShareUrl(primary);
-  if(!url){ showToast('تعذر تفعيل المشاركة.','warn'); return; }
-  const full=window.location.origin+url;
-  shareLinkInput.value=full;
-  buildShareLinks(full, primary.dataset.name||'ملف');
-  shareEnableWrap.classList.add('hidden');
-  shareDisabledMessage.classList.add('hidden');
-  showToast('تم تفعيل المشاركة','success');
-  updateSelectionMeta();
-});
 
 shareCopyBtn?.addEventListener('click', async ()=>{
   const primary=getPrimary();
@@ -1663,8 +1636,6 @@ shareCopyBtn?.addEventListener('click', async ()=>{
   buildShareLinks(full, primary.dataset.name||'ملف');
   await navigator.clipboard.writeText(full);
   showToast('تم نسخ الرابط','success');
-  shareEnableWrap.classList.add('hidden');
-  shareDisabledMessage.classList.add('hidden');
   updateSelectionMeta();
 });
 
