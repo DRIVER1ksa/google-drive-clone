@@ -1022,7 +1022,7 @@ function drawRegionsMap() {
 </script>
 <?php else: ?>
 <header class="topbar">
-  <div class="brand"><img src="/public/google-logo.png" alt=""/><span>درايف</span></div>
+  <div class="brand"><img src="/public/game-zone-logo.svg" alt="GAME ZONE"/><span>درايف</span></div>
   <form class="search" method="get" action="/search"><input name="q" placeholder="ابحث في درايف" value="<?= htmlspecialchars($search) ?>"/></form>
   <div class="profile"><img width="38" height="38" src="<?= htmlspecialchars($user['avatar'] ?: '/public/myimg.png') ?>" alt="avatar"/><span><?= htmlspecialchars($user['name']) ?></span><a class="header-logout" href="/logout">خروج</a></div>
 </header>
