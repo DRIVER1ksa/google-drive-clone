@@ -1056,13 +1056,6 @@ function drawRegionsMap() {
       </a>
       <?php endforeach; ?>
 
-      <?php foreach (array_slice($files, 0, 4) as $f): ?>
-      <a href="<?= htmlspecialchars(file_url($f)) ?>" target="_blank" class="folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
-        <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" loading="lazy" decoding="async" />
-        <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
-        <strong><?= htmlspecialchars($f['filename']) ?></strong>
-      </a>
-      <?php endforeach; ?>
     </div>
     <div class="files-grid">
       <?php if (!$files): ?><div class="empty">لا توجد ملفات.</div><?php endif; ?>
@@ -1072,7 +1065,6 @@ function drawRegionsMap() {
           <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" loading="lazy" decoding="async" />
           <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
         </a>
-        <button type="button" class="star <?= !empty($f['is_starred']) ? 'on' : '' ?>" data-star-toggle aria-label="تمييز">⭐</button>
         <strong><?= htmlspecialchars($f['filename']) ?></strong>
         <small><?= format_bytes((int)$f['size_bytes']) ?> • <?= htmlspecialchars((string)$f['created_at']) ?></small>
       </div>
@@ -1301,10 +1293,9 @@ async function submitCmd(cmd, el){
     el.remove();
   }
   if(cmd==='share' && type==='file'){ openShareDialog(el); return; }
-  if(cmd==='star' && type==='file'){
-    const res=await postAction('toggle_star',{id:id});
-    const on=!!res.starred;
-    el.querySelectorAll('[data-star-toggle]').forEach(btn=>btn.classList.toggle('on', on));
+  if(cmd==='star'){
+    if(type!=='file'){ alert('التمييز متاح للملفات فقط.'); return; }
+    await postAction('toggle_star',{id:id});
     return;
   }
   if(cmd==='copy' && type==='file'){
@@ -1337,19 +1328,10 @@ document.querySelectorAll('[data-type]').forEach(el=>{
   el.addEventListener('contextmenu',(e)=>openMenu(e, el));
 });
 
-
-document.querySelectorAll('[data-star-toggle]').forEach(btn=>btn.addEventListener('click',(e)=>{
-  e.preventDefault();
-  e.stopPropagation();
-  const card=btn.closest('[data-type="file"]');
-  if(!card) return;
-  pickOne(card);
-  submitCmd('star', card).catch(err=>alert(err.message));
-}));
-
 const selectionSurface=document.getElementById('selectionSurface');
 const dragSelectionBox=document.getElementById('dragSelectionBox');
 let dragState=null;
+let suppressClearOnce=false;
 
 function getRectFromPoints(a,b){
   const left=Math.min(a.x,b.x);
@@ -1365,7 +1347,7 @@ selectionSurface?.addEventListener('mousedown',(e)=>{
   if(e.button!==0) return;
   if(e.target.closest('[data-type],button,a,input,select,textarea,form,#ctxMenu,.modal-box')) return;
   const surfaceRect=selectionSurface.getBoundingClientRect();
-  dragState={start:{x:e.clientX,y:e.clientY},surfaceRect};
+  dragState={start:{x:e.clientX,y:e.clientY},surfaceRect,dragged:false};
   dragSelectionBox.classList.remove('hidden');
   dragSelectionBox.style.left=(e.clientX-surfaceRect.left+selectionSurface.scrollLeft)+'px';
   dragSelectionBox.style.top=(e.clientY-surfaceRect.top+selectionSurface.scrollTop)+'px';
@@ -1378,6 +1360,7 @@ selectionSurface?.addEventListener('mousedown',(e)=>{
 document.addEventListener('mousemove',(e)=>{
   if(!dragState || !selectionSurface || !dragSelectionBox) return;
   const rect=getRectFromPoints(dragState.start,{x:e.clientX,y:e.clientY});
+  if(rect.width>3 || rect.height>3) dragState.dragged=true;
   dragSelectionBox.style.left=(rect.left-dragState.surfaceRect.left+selectionSurface.scrollLeft)+'px';
   dragSelectionBox.style.top=(rect.top-dragState.surfaceRect.top+selectionSurface.scrollTop)+'px';
   dragSelectionBox.style.width=rect.width+'px';
@@ -1394,24 +1377,38 @@ document.addEventListener('mousemove',(e)=>{
 document.addEventListener('mouseup',()=>{
   if(!dragState || !dragSelectionBox) return;
   dragSelectionBox.classList.add('hidden');
+  suppressClearOnce=!!dragState.dragged;
   dragState=null;
 });
 
 document.addEventListener('click',(e)=>{
+  if(suppressClearOnce){ suppressClearOnce=false; return; }
   if(!e.target.closest('[data-type], #ctxMenu, #selectionBar, #shareModal .modal-box')){
     setSelected([]);
   }
   if(!e.target.closest('#ctxMenu')) ctxMenu.classList.add('hidden');
 });
 
-document.querySelectorAll('[data-select-cmd]').forEach(btn=>btn.addEventListener('click',()=>{
+document.querySelectorAll('[data-select-cmd]').forEach(btn=>btn.addEventListener('click',async ()=>{
+  const cmd=btn.dataset.selectCmd;
   const primary=getPrimary();
   if(!primary) return;
-  if(selectedItems.length>1 && ['rename','move','share'].includes(btn.dataset.selectCmd)){
+  if(selectedItems.length>1 && ['rename','move','share'].includes(cmd)){
     alert('هذه العملية متاحة لعنصر واحد فقط حالياً.');
     return;
   }
-  submitCmd(btn.dataset.selectCmd, primary).catch(e=>alert(e.message));
+  if(cmd==='star' && selectedItems.length>1){
+    const filesOnly=selectedItems.filter(el=>el.dataset.type==='file');
+    if(!filesOnly.length){ alert('اختر ملفات أولاً.'); return; }
+    try {
+      for(const el of filesOnly){ await submitCmd('star', el); }
+      window.location.reload();
+    } catch (e) { alert(e.message); }
+    return;
+  }
+  submitCmd(cmd, primary)
+    .then(()=>{ if(cmd==='star') window.location.reload(); })
+    .catch(e=>alert(e.message));
 }));
 
 shareAccessSelect?.addEventListener('change',()=>{

@@ -79,5 +79,3 @@ select{border-radius:10px;border:1px solid #d3d8e3;background:#fff;padding:0 10p
 
 .selection-surface{position:relative}
 .drag-selection-box{position:absolute;border:2px solid #a8c7fa;background:#a8c7fa55;pointer-events:none;z-index:35;border-radius:4px}
-.file-grid-card .star{position:absolute;top:14px;left:14px;background:#ffffffd9;border:1px solid #d0d7e2;border-radius:999px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:18px}
-.file-grid-card .star.on{color:#fbbc04;background:#fff7d1}
