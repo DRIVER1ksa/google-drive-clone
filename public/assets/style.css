@@ -94,9 +94,9 @@ select{border-radius:10px;border:1px solid #d3d8e3;background:#fff;padding:0 10p
 .card-menu-trigger{position:absolute;top:8px;left:8px;width:28px;height:28px;border-radius:8px;border:1px solid #ced5e2;background:#ffffffd9;color:#4b5563;font-size:18px;line-height:1;display:flex;align-items:center;justify-content:center}
 .card-menu-trigger:hover{background:#fff}
 .modern-left-menu{min-width:220px;border-radius:0;background:#273247;border:1px solid #4b5a74;padding:8px}
-.modern-left-menu button{height:40px;font-size:21px;display:flex;align-items:center;justify-content:space-between;color:#d8e2f1;padding:0 8px;border-radius:6px}
-.modern-left-menu button span{font-size:24px;font-weight:600}
-.modern-left-menu button b{font-size:18px;opacity:.85}
+.modern-left-menu button{height:40px;display:flex;flex-direction:row-reverse;align-items:center;justify-content:flex-start;gap:10px;color:#d8e2f1;padding:0 10px;border-radius:6px}
+.modern-left-menu button span{font-size:20px;font-weight:600;line-height:1}
+.modern-left-menu button i{font-size:16px;opacity:.9;width:18px;text-align:center}
 .modern-left-menu hr{border:0;height:1px;background:#475468;margin:6px 0}
 
 .ShareDialog{max-width:760px;background:#f7f7f8;color:#1f2937;border:1px solid #d7dbe4;padding:26px}
@@ -110,6 +110,8 @@ select{border-radius:10px;border:1px solid #d3d8e3;background:#fff;padding:0 10p
 .ShareDialog-linkInput{height:52px;font-size:24px;border-radius:6px;border:1px solid #d1d5db;flex:1;padding:0 12px;background:#fff}
 .ShareDialog-copyBtn{height:52px;background:#1579ff;border:0;color:#fff;border-radius:6px;min-width:170px;font-size:20px}
 .ShareDialog-socialLinks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:14px}
-.ShareDialog-socialLinks a{height:46px;border-radius:999px;background:#fff;border:1px solid #d1d5db;display:flex;align-items:center;justify-content:center;font-size:18px}
+.ShareDialog-socialLinks a{height:46px;border-radius:999px;background:#fff;border:1px solid #d1d5db;display:flex;align-items:center;justify-content:center;gap:8px;font-size:16px;color:#1f2937;padding:0 12px}.ShareDialog-socialLinks a i{font-size:16px}
 .ShareDialog-disabledLinkOverlay{margin-top:10px;background:#eef2f7;border:1px dashed #9ca3af;border-radius:10px;padding:12px}
 .ShareDialog-enableLinkBtn{height:40px;border-radius:8px;background:#1a73e8;color:#fff;border:0}
+
+.ShareDialog-copyBtn i{margin-inline-start:6px}

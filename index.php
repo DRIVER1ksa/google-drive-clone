@@ -752,6 +752,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>سيف درايف</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" integrity="sha512-dymI7Oq6fNQ2V+4CSkiqhSSjMBDlNIQP5CKEM5Qn2ATqNnS/xPbbGr3HdWu3UwG+329xNXmLKcKD5Vac/mswHw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
   <link rel="stylesheet" href="/public/assets/style.css?v=<?= $cssVersion ?>" />
 </head>
 <body>
@@ -1096,45 +1097,45 @@ function drawRegionsMap() {
   </form></div></div>
 
 <div id="shareModal" class="modal hidden"><div class="modal-box ShareDialog"><button class="close" data-close>×</button>
-  <h1 class="ShareDialog-title">Share this file</h1>
+  <h1 class="ShareDialog-title">مشاركة الملف</h1>
   <div class="ShareDialog-itemInfo"><b id="shareFileName">-</b> (<span id="shareFileSize">-</span>)</div>
-  <div class="ShareDialog-disabledMessage hidden" id="shareDisabledMessage">You cannot share this file because the owner has disabled sharing.</div>
-  <div class="ShareDialog-copyrightMessage hidden"><b>Restricted</b> - This file cannot be shared because it is copyrighted.</div>
-  <div class="ShareDialog-dmcaMessage hidden"><b>Restricted</b> - This file cannot be shared because it is restricted due to a DMCA claim.</div>
-  <div class="ShareDialog-virusMessage hidden"><b>Restricted</b> - This file cannot be shared because it contains a virus.</div>
+  <div class="ShareDialog-disabledMessage hidden" id="shareDisabledMessage">لا يمكن مشاركة هذا الملف لأن المالك عطّل المشاركة.</div>
+  <div class="ShareDialog-copyrightMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف لأنه محمي بحقوق النشر.</div>
+  <div class="ShareDialog-dmcaMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف بسبب مطالبة DMCA.</div>
+  <div class="ShareDialog-virusMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف لأنه يحتوي على فيروس.</div>
   <div class="ShareDialog-links">
     <div class="ShareDialog-inputGroup" role="group" aria-labelledby="share-link-label">
-      <label for="share-link-input" id="share-link-label" class="hidden">Share link</label>
+      <label for="share-link-input" id="share-link-label" class="hidden">رابط المشاركة</label>
       <input id="share-link-input" class="ShareDialog-linkInput" type="text" value="" readonly="readonly">
-      <button type="button" class="copy-link ShareDialog-copyBtn" id="shareCopyBtn">Copy Link</button>
+      <button type="button" class="copy-link ShareDialog-copyBtn" id="shareCopyBtn"><i class="fas fa-link" aria-hidden="true"></i>نسخ الرابط</button>
     </div>
-    <div class="ShareDialog-socialLinks" role="group" aria-label="Social links">
-      <a href="#" target="_blank" rel="noopener" id="shareFacebook" class="ShareDialog-facebook">Facebook</a>
-      <a href="#" target="_blank" rel="noopener" id="shareX" class="ShareDialog-x">X</a>
-      <a href="#" target="_blank" rel="noopener" id="shareEmail" class="ShareDialog-email">Email</a>
-      <a href="#" target="_blank" rel="noopener" id="shareReddit" class="ShareDialog-reddit">Reddit</a>
-      <a href="#" target="_blank" rel="noopener" id="shareBlogger" class="ShareDialog-blogger">Blogger</a>
-      <a href="#" target="_blank" rel="noopener" id="shareLinkedin" class="ShareDialog-linkedin">LinkedIn</a>
-      <a href="#" target="_blank" rel="noopener" id="shareWhatsapp" class="ShareDialog-whatsapp">WhatsApp</a>
-      <a href="#" target="_blank" rel="noopener" id="shareTelegram" class="ShareDialog-telegram">Telegram</a>
+    <div class="ShareDialog-socialLinks" role="group" aria-label="روابط اجتماعية">
+      <a href="#" target="_blank" rel="noopener" id="shareFacebook" class="ShareDialog-facebook"><i class="fab fa-facebook-f" aria-hidden="true"></i><span>فيسبوك</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareX" class="ShareDialog-x"><i class="fab fa-twitter" aria-hidden="true"></i><span>X</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareEmail" class="ShareDialog-email"><i class="fas fa-envelope" aria-hidden="true"></i><span>البريد</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareReddit" class="ShareDialog-reddit"><i class="fab fa-reddit-alien" aria-hidden="true"></i><span>ريديت</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareBlogger" class="ShareDialog-blogger"><i class="fab fa-blogger-b" aria-hidden="true"></i><span>بلوجر</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareLinkedin" class="ShareDialog-linkedin"><i class="fab fa-linkedin-in" aria-hidden="true"></i><span>لينكدإن</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareWhatsapp" class="ShareDialog-whatsapp"><i class="fab fa-whatsapp" aria-hidden="true"></i><span>واتساب</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareTelegram" class="ShareDialog-telegram"><i class="fab fa-telegram-plane" aria-hidden="true"></i><span>تلغرام</span></a>
     </div>
     <div class="ShareDialog-disabledLinkOverlay hidden" id="shareEnableWrap">
-      <p>Sharing is currently disabled for this file.</p>
-      <button type="button" class="share-link-enable ShareDialog-enableLinkBtn" id="shareEnableBtn">Enable Sharing</button>
+      <p>المشاركة معطلة حالياً لهذا الملف.</p>
+      <button type="button" class="share-link-enable ShareDialog-enableLinkBtn" id="shareEnableBtn">تفعيل المشاركة</button>
     </div>
   </div>
 </div></div>
 
 <div id="ctxMenu" class="ctx-menu hidden modern-left-menu">
-  <button data-cmd="share"><span>مشاركة</span><b>🔗</b></button>
-  <button data-cmd="copy"><span>نسخ الرابط</span><b>🔗</b></button>
-  <button data-cmd="download"><span>تنزيل</span><b>⤓</b></button>
+  <button data-cmd="share"><i class="fas fa-share-alt" aria-hidden="true"></i><span>مشاركة</span></button>
+  <button data-cmd="copy"><i class="fas fa-link" aria-hidden="true"></i><span>نسخ الرابط</span></button>
+  <button data-cmd="download"><i class="fas fa-download" aria-hidden="true"></i><span>تنزيل</span></button>
   <hr>
-  <button data-cmd="move"><span>نقل إلى...</span><b>🗂</b></button>
-  <button data-cmd="rename"><span>إعادة تسمية</span><b>✎</b></button>
-  <button data-cmd="password"><span>حماية بكلمة مرور</span><b>🔒</b></button>
+  <button data-cmd="move"><i class="far fa-folder-open" aria-hidden="true"></i><span>نقل إلى...</span></button>
+  <button data-cmd="rename"><i class="far fa-edit" aria-hidden="true"></i><span>إعادة تسمية</span></button>
+  <button data-cmd="password"><i class="fas fa-lock" aria-hidden="true"></i><span>حماية بكلمة مرور</span></button>
   <hr>
-  <button data-cmd="delete"><span>نقل إلى سلة المهملات</span><b>🗑</b></button>
+  <button data-cmd="delete"><i class="far fa-trash-alt" aria-hidden="true"></i><span>نقل إلى سلة المهملات</span></button>
 </div>
 
 <form id="cmdForm" method="post" class="hidden">
@@ -1374,7 +1375,7 @@ async function ensureShareUrl(el){
 
 async function openShareDialog(el){
   if(!el || el.dataset.type!=='file'){ showToast('المشاركة متاحة للملفات فقط.','warn'); return; }
-  shareFileName.textContent=(el.dataset.name||'file');
+  shareFileName.textContent=(el.dataset.name||'ملف');
   const sizeText=el.querySelector('small')?.textContent?.split('•')[0]?.trim()||'-';
   shareFileSize.textContent=sizeText;
   let url=el.dataset.shareUrl||'';
@@ -1387,7 +1388,7 @@ async function openShareDialog(el){
     shareDisabledMessage.classList.add('hidden');
     const full=window.location.origin+url;
     shareLinkInput.value=full;
-    buildShareLinks(full, el.dataset.name||'file');
+    buildShareLinks(full, el.dataset.name||'ملف');
   }
   shareModal.classList.remove('hidden');
 }
@@ -1568,7 +1569,7 @@ shareEnableBtn?.addEventListener('click', async ()=>{
   if(!url){ showToast('تعذر تفعيل المشاركة.','warn'); return; }
   const full=window.location.origin+url;
   shareLinkInput.value=full;
-  buildShareLinks(full, primary.dataset.name||'file');
+  buildShareLinks(full, primary.dataset.name||'ملف');
   shareEnableWrap.classList.add('hidden');
   shareDisabledMessage.classList.add('hidden');
   showToast('تم تفعيل المشاركة','success');
@@ -1582,7 +1583,7 @@ shareCopyBtn?.addEventListener('click', async ()=>{
   if(!url){ showToast('تعذر إنشاء رابط مشاركة.','warn'); return; }
   const full=window.location.origin + url;
   shareLinkInput.value=full;
-  buildShareLinks(full, primary.dataset.name||'file');
+  buildShareLinks(full, primary.dataset.name||'ملف');
   await navigator.clipboard.writeText(full);
   showToast('تم نسخ الرابط','success');
   shareEnableWrap.classList.add('hidden');
