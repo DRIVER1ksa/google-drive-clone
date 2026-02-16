@@ -124,19 +124,21 @@ select{border-radius:10px;border:1px solid #d3d8e3;background:#fff;padding:0 10p
 @media (max-width:900px){.ShareDialog-socialLinks{grid-template-columns:repeat(4,minmax(0,1fr))}}
 
 
-.move-modal-box{max-width:760px;background:#0f1115;color:#e5e7eb;border:1px solid #2b313b}
-.move-modal-box h3{margin:0 0 8px;font-size:30px}
-.move-current{margin:0 0 10px;color:#cbd5e1}
-#moveSearchInput{width:100%;height:42px;background:#111827;color:#f3f4f6;border:1px solid #374151;border-radius:10px;padding:0 12px;margin-bottom:10px}
+.move-modal-box,.rename-modal-box{max-width:760px;background:#111827;color:#e5e7eb;border:1px solid #374151;font-family:'Cairo',sans-serif}
+.move-modal-box h3,.rename-modal-box h3{margin:0 0 8px;font-size:28px;display:flex;align-items:center;gap:10px;color:#f8fafc}
+.move-current,.rename-current{margin:0 0 10px;color:#cbd5e1}
+#moveSearchInput,#renameInput{width:100%;height:44px;background:#0b1220;color:#f3f4f6;border:1px solid #374151;border-radius:10px;padding:0 12px;margin-bottom:10px}
 .move-folder-list{max-height:360px;overflow:auto;border:1px solid #2f3743;border-radius:10px;background:#0b1220;padding:6px;display:flex;flex-direction:column;gap:6px}
-.move-folder-item{height:40px;justify-content:flex-start;text-align:right;background:#111827;color:#e5e7eb;border:1px solid #374151;border-radius:8px;display:flex;align-items:center;gap:8px}
-.move-folder-item.active{background:#1d4ed8;border-color:#60a5fa;color:#fff}
-.move-actions{display:flex;justify-content:space-between;gap:10px;margin-top:12px}
-.move-actions button{height:40px}
-.move-actions #moveConfirmBtn{background:#1d4ed8;color:#fff;border:0}
+.move-folder-item{height:42px;justify-content:flex-start;text-align:right;background:#111827;color:#e5e7eb;border:1px solid #374151;border-radius:8px;display:flex;align-items:center;gap:8px;font-size:15px}
+.move-folder-item i{width:18px;text-align:center;color:#93c5fd}
+.move-folder-item.active{background:#1d4ed8;border-color:#60a5fa;color:#fff}.move-folder-item.active i{color:#fff}
+.move-actions,.rename-actions{display:flex;justify-content:space-between;gap:10px;margin-top:12px}
+.move-actions button,.rename-actions button{height:40px;display:flex;align-items:center;gap:8px}
+.move-actions #moveConfirmBtn,.rename-actions #renameSaveBtn{background:#1d4ed8;color:#fff;border:0}
+.rename-actions #renameCancelBtn,.move-actions #moveCancelBtn{background:#0b1220;color:#e5e7eb;border:1px solid #334155}
 
 .modern-sidebar{background:linear-gradient(180deg,#ffffff,#f8faff);box-shadow:0 4px 24px #0b57d012}
 .sidebar-nav{display:flex;flex-direction:column;gap:6px;margin-top:4px}.sidebar-nav a{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;color:#334155}.sidebar-nav a i{width:18px;text-align:center}.sidebar-nav a.active,.sidebar-nav a:hover{background:#dbe8ff;color:#0b57d0}
 .new-btn i,.new-menu button i,.logout i{margin-inline-start:6px}
 .new-menu button{display:flex;align-items:center;gap:8px}
-.section-head{display:flex;align-items:center}.section-head h2{margin:0;font-size:30px}
+.section-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.section-head h2{margin:0;font-size:30px}.danger-btn{height:38px;border-radius:10px;border:1px solid #7f1d1d;background:#991b1b;color:#fff;display:inline-flex;align-items:center;gap:8px;padding:0 12px}.danger-btn:hover{background:#b91c1c}

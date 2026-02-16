@@ -606,7 +606,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $id = (int)($_POST['id'] ?? 0);
             $toRaw = $_POST['target_folder_id'] ?? '';
             $to = ($toRaw === '') ? null : (int)$toRaw;
-            $st = $pdo->prepare('UPDATE files SET folder_id=? WHERE id=? AND user_id=?');
+            $st = $pdo->prepare('UPDATE files SET folder_id=?, is_trashed=0 WHERE id=? AND user_id=?');
             $st->execute([$to, $id, $user['id']]);
         }
 
@@ -622,7 +622,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $folderIds = array_values(array_filter(array_map('intval', $folderIds), fn($v) => $v > 0));
 
             if ($fileIds) {
-                $stFile = $pdo->prepare('UPDATE files SET folder_id=? WHERE id=? AND user_id=?');
+                $stFile = $pdo->prepare('UPDATE files SET folder_id=?, is_trashed=0 WHERE id=? AND user_id=?');
                 foreach ($fileIds as $fid) {
                     $stFile->execute([$to, $fid, $user['id']]);
                 }
@@ -646,6 +646,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($to === $id) throw new RuntimeException('لا يمكن نقل المجلد إلى نفسه.');
             $st = $pdo->prepare('UPDATE folders SET parent_id=? WHERE id=? AND user_id=?');
             $st->execute([$to, $id, $user['id']]);
+        }
+
+        if ($action === 'empty_trash') {
+            $q = $pdo->prepare('SELECT relative_path FROM files WHERE user_id=? AND is_trashed=1');
+            $q->execute([$user['id']]);
+            foreach ($q->fetchAll() as $row) {
+                $path = __DIR__ . '/' . $row['relative_path'];
+                if (is_file($path)) @unlink($path);
+            }
+            $del = $pdo->prepare('DELETE FROM files WHERE user_id=? AND is_trashed=1');
+            $del->execute([$user['id']]);
         }
 
         if (in_array($action, ['trash','restore','delete'], true)) {
@@ -1061,7 +1072,7 @@ function drawRegionsMap() {
     <input id="quickFileInput" type="file" multiple class="hidden" />
     <div id="dropUploadOverlay" class="drop-upload-overlay hidden"><div class="drop-upload-box">أفلت الملفات هنا لرفعها مباشرة</div></div>
 
-    <div class="section-head"><h2><?= htmlspecialchars($pageTitle) ?></h2></div>
+    <div class="section-head"><h2><?= htmlspecialchars($pageTitle) ?></h2><?php if ($route==='trash'): ?><button type="button" id="emptyTrashBtn" class="danger-btn"><i class="fas fa-trash"></i> حذف نهائي لكل الملفات</button><?php endif; ?></div>
     <div id="selectionBar" class="selection-bar hidden">
       <div class="selection-count"><span id="selectionCount">0</span> تم اختيار ملف</div>
       <div class="selection-actions">
@@ -1095,7 +1106,6 @@ function drawRegionsMap() {
           <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
         </div>
         <strong><?= htmlspecialchars($f['filename']) ?></strong>
-        <small><?= format_bytes((int)$f['size_bytes']) ?> • <?= htmlspecialchars((string)$f['created_at']) ?></small>
       </div>
       <?php endforeach; ?>
     </div>
@@ -1126,16 +1136,23 @@ function drawRegionsMap() {
 
 
 <div id="moveModal" class="modal hidden"><div class="modal-box move-modal-box"><button class="close" data-close>×</button>
-  <h3 id="moveModalTitle">نقل العناصر المحددة</h3>
+  <h3 id="moveModalTitle"><i class="fas fa-folder-open"></i> نقل العناصر المحددة</h3>
   <p class="move-current">اختر المجلد الهدف:</p>
   <input id="moveSearchInput" placeholder="ابحث عن مجلد..." />
   <div id="moveFolderList" class="move-folder-list">
-    <button type="button" class="move-folder-item" data-folder-id="">📁 ملفاتي (الجذر)</button>
+    <button type="button" class="move-folder-item" data-folder-id=""><i class="far fa-hdd"></i><span>ملفاتي (الجذر)</span></button>
     <?php foreach ($allFolders as $af): ?>
-      <button type="button" class="move-folder-item" data-folder-id="<?= (int)$af['id'] ?>">📁 <?= htmlspecialchars($af['name']) ?></button>
+      <button type="button" class="move-folder-item" data-folder-id="<?= (int)$af['id'] ?>"><i class="far fa-folder"></i><span><?= htmlspecialchars($af['name']) ?></span></button>
     <?php endforeach; ?>
   </div>
-  <div class="move-actions"><button type="button" id="moveCancelBtn">إلغاء</button><button type="button" id="moveConfirmBtn" disabled>نقل</button></div>
+  <div class="move-actions"><button type="button" id="moveCancelBtn"><i class="fas fa-times"></i> إلغاء</button><button type="button" id="moveConfirmBtn" disabled><i class="fas fa-check"></i> نقل</button></div>
+</div></div>
+
+<div id="renameModal" class="modal hidden"><div class="modal-box rename-modal-box"><button class="close" data-close>×</button>
+  <h3><i class="far fa-edit"></i> إعادة تسمية</h3>
+  <p class="rename-current" id="renameCurrentLabel">العنصر المحدد</p>
+  <input id="renameInput" placeholder="الاسم الجديد" />
+  <div class="rename-actions"><button type="button" id="renameCancelBtn"><i class="fas fa-times"></i> إلغاء</button><button type="button" id="renameSaveBtn"><i class="fas fa-check"></i> حفظ</button></div>
 </div></div>
 
 <div id="shareModal" class="modal hidden"><div class="modal-box ShareDialog"><button class="close" data-close>×</button>
@@ -1349,6 +1366,12 @@ const moveSearchInput=document.getElementById('moveSearchInput');
 const moveFolderList=document.getElementById('moveFolderList');
 const moveConfirmBtn=document.getElementById('moveConfirmBtn');
 const moveCancelBtn=document.getElementById('moveCancelBtn');
+const renameModal=document.getElementById('renameModal');
+const renameInput=document.getElementById('renameInput');
+const renameCurrentLabel=document.getElementById('renameCurrentLabel');
+const renameSaveBtn=document.getElementById('renameSaveBtn');
+const renameCancelBtn=document.getElementById('renameCancelBtn');
+const emptyTrashBtn=document.getElementById('emptyTrashBtn');
 const toastRoot=document.getElementById('toastRoot');
 let currentTarget=null;
 let selectedItems=[];
@@ -1478,11 +1501,8 @@ async function submitCmd(cmd, el){
     return;
   }
   if(cmd==='rename'){
-    const n=prompt('الاسم الجديد:', el.dataset.name||'');
-    if(!n) return;
-    await postAction((type==='file'?'rename_file':'rename_folder'), {id:id,new_name:n});
-    el.dataset.name=n;
-    const lbl=el.querySelector('strong'); if(lbl) lbl.textContent=n;
+    openRenameModal(el);
+    return;
   }
   if(cmd==='password'){ showToast('ميزة حماية كلمة المرور ستتوفر قريباً.','info'); return; }
   if(cmd==='move'){
@@ -1620,6 +1640,17 @@ document.querySelectorAll('[data-select-cmd]').forEach(btn=>btn.addEventListener
 
 let pendingMoveItems=[];
 let moveTargetFolder='';
+let renameTarget=null;
+
+function openRenameModal(el){
+  renameTarget=el||null;
+  if(!renameTarget) return;
+  if(renameCurrentLabel) renameCurrentLabel.textContent=`العنصر الحالي: ${renameTarget.dataset.name||''}`;
+  if(renameInput) renameInput.value=renameTarget.dataset.name||'';
+  renameModal?.classList.remove('hidden');
+  setTimeout(()=>renameInput?.focus(), 50);
+}
+
 
 function updateSelectionActions(){
   if(!selectionBar) return;
@@ -1672,6 +1703,25 @@ moveConfirmBtn?.addEventListener('click', async ()=>{
   setTimeout(()=>location.reload(), 300);
 });
 
+renameCancelBtn?.addEventListener('click',()=>renameModal?.classList.add('hidden'));
+renameSaveBtn?.addEventListener('click', async ()=>{
+  if(!renameTarget) return;
+  const n=(renameInput?.value||'').trim();
+  if(!n){ showToast('أدخل اسماً جديداً.','warn'); return; }
+  await postAction((renameTarget.dataset.type==='file'?'rename_file':'rename_folder'), {id:renameTarget.dataset.id,new_name:n});
+  renameTarget.dataset.name=n;
+  const lbl=renameTarget.querySelector('strong'); if(lbl) lbl.textContent=n;
+  renameModal?.classList.add('hidden');
+  showToast('تمت إعادة التسمية بنجاح','success');
+});
+renameInput?.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); renameSaveBtn?.click(); }});
+
+emptyTrashBtn?.addEventListener('click', async ()=>{
+  if(!confirm('هل تريد حذف كل الملفات من سلة المهملات نهائياً؟')) return;
+  await postAction('empty_trash',{});
+  showToast('تم حذف كل ملفات سلة المهملات نهائياً','success');
+  setTimeout(()=>location.reload(), 300);
+});
 
 shareCopyBtn?.addEventListener('click', async ()=>{
   const primary=getPrimary();
@@ -1688,6 +1738,7 @@ shareCopyBtn?.addEventListener('click', async ()=>{
 
 ctxMenu?.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',(e)=>{
   e.stopPropagation();
+  ctxMenu.classList.add('hidden');
   const primary=getPrimary();
   if(!primary) return;
   submitCmd(btn.dataset.cmd, primary).catch(e=>showToast(e.message,'warn'));
