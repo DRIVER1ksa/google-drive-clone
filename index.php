@@ -610,6 +610,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $st->execute([$to, $id, $user['id']]);
         }
 
+        if ($action === 'move_items') {
+            $toRaw = $_POST['target_folder_id'] ?? '';
+            $to = ($toRaw === '') ? null : (int)$toRaw;
+            $fileIds = $_POST['file_ids'] ?? [];
+            $folderIds = $_POST['folder_ids'] ?? [];
+            if (!is_array($fileIds)) $fileIds = [];
+            if (!is_array($folderIds)) $folderIds = [];
+
+            $fileIds = array_values(array_filter(array_map('intval', $fileIds), fn($v) => $v > 0));
+            $folderIds = array_values(array_filter(array_map('intval', $folderIds), fn($v) => $v > 0));
+
+            if ($fileIds) {
+                $stFile = $pdo->prepare('UPDATE files SET folder_id=? WHERE id=? AND user_id=?');
+                foreach ($fileIds as $fid) {
+                    $stFile->execute([$to, $fid, $user['id']]);
+                }
+            }
+
+            if ($folderIds) {
+                $stFolder = $pdo->prepare('UPDATE folders SET parent_id=? WHERE id=? AND user_id=?');
+                foreach ($folderIds as $folderId) {
+                    if ($to !== null && $to === $folderId) {
+                        throw new RuntimeException('لا يمكن نقل المجلد إلى نفسه.');
+                    }
+                    $stFolder->execute([$to, $folderId, $user['id']]);
+                }
+            }
+        }
+
         if ($action === 'move_folder') {
             $id = (int)($_POST['id'] ?? 0);
             $toRaw = $_POST['target_folder_id'] ?? '';
@@ -1060,7 +1089,7 @@ function drawRegionsMap() {
       <?php if (!$files): ?><div class="empty">لا توجد ملفات.</div><?php endif; ?>
       <?php foreach ($files as $f): ?>
       <div class="file-grid-card folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
-        <a href="<?= htmlspecialchars(file_url($f)) ?>" target="_blank" class="file-grid-thumb-link">
+        <a href="<?= htmlspecialchars(file_url($f)) ?>" class="file-grid-thumb-link">
           <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" />
           <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
         </a>
@@ -1410,7 +1439,13 @@ async function postAction(action, payload={}){
   const fd=new FormData();
   fd.append('action', action);
   fd.append('redirect', window.location.pathname);
-  Object.entries(payload).forEach(([k,v])=>fd.append(k, v==null?'':String(v)));
+  Object.entries(payload).forEach(([k,v])=>{
+    if(Array.isArray(v)){
+      v.forEach(item=>fd.append(`${k}[]`, item==null?'':String(item)));
+      return;
+    }
+    fd.append(k, v==null?'':String(v));
+  });
   const r=await fetch(window.location.pathname,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd});
   const j=await r.json();
   if(!r.ok || !j.ok) throw new Error(j.message||'فشلت العملية');
@@ -1461,6 +1496,7 @@ async function submitCmd(cmd, el){
 document.querySelectorAll('[data-type]').forEach(el=>{
   el.classList.add('selectable-item');
   el.addEventListener('click',(e)=>{
+    if(el.dataset.type==='file' && e.target.closest('a[href]')) e.preventDefault();
     if(e.target.closest('button,form,.star')) return;
     if(e.metaKey || e.ctrlKey){
       const next=selectedItems.includes(el)?selectedItems.filter(x=>x!==el):[...selectedItems, el];
@@ -1616,10 +1652,9 @@ moveSearchInput?.addEventListener('input',()=>{
 moveCancelBtn?.addEventListener('click',()=>moveModal.classList.add('hidden'));
 moveConfirmBtn?.addEventListener('click', async ()=>{
   if(!pendingMoveItems.length) return;
-  for(const el of pendingMoveItems){
-    if(el.dataset.type==='file') await postAction('move_file',{id:el.dataset.id,target_folder_id:moveTargetFolder});
-    else await postAction('move_folder',{id:el.dataset.id,target_folder_id:moveTargetFolder});
-  }
+  const fileIds=pendingMoveItems.filter(el=>el.dataset.type==='file').map(el=>el.dataset.id).filter(Boolean);
+  const folderIds=pendingMoveItems.filter(el=>el.dataset.type==='folder').map(el=>el.dataset.id).filter(Boolean);
+  await postAction('move_items',{target_folder_id:moveTargetFolder,file_ids:fileIds,folder_ids:folderIds});
   showToast('تم نقل العناصر بنجاح','success');
   moveModal.classList.add('hidden');
   setTimeout(()=>location.reload(), 300);
