@@ -1049,6 +1049,8 @@ function drawRegionsMap() {
       <p>تم استخدام <?= format_bytes($storage) ?> من إجمالي 1 تيرابايت</p>
     </div>
 
+    <div id="uploadProgress" class="progress hidden"><div id="uploadProgressBar"></div><p id="uploadProgressText">0%</p><p id="uploadSpeedText">0 م.ب/ث</p></div>
+
     <a class="logout" href="/logout"><i class="fas fa-sign-out-alt"></i> خروج</a>
   </aside>
 
@@ -1056,7 +1058,6 @@ function drawRegionsMap() {
     <?php if ($dbError): ?><div class="flash error">خطأ قاعدة البيانات: <?= htmlspecialchars($dbError) ?></div><?php endif; ?>
     <?php if ($flash): ?><div class="flash <?= $flash['type'] ?>"><?= htmlspecialchars($flash['msg']) ?></div><?php endif; ?>
 
-    <div id="uploadProgress" class="progress hidden"><div id="uploadProgressBar"></div><p id="uploadProgressText">0%</p><p id="uploadSpeedText">0 م.ب/ث</p></div>
     <input id="quickFileInput" type="file" multiple class="hidden" />
     <div id="dropUploadOverlay" class="drop-upload-overlay hidden"><div class="drop-upload-box">أفلت الملفات هنا لرفعها مباشرة</div></div>
 
