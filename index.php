@@ -1086,7 +1086,7 @@ function drawRegionsMap() {
       <?php endforeach; ?>
 
     </div>
-    <div class="files-grid">
+    <div class="files-grid" id="filesGrid">
       <?php if (!$files): ?><div class="empty">لا توجد ملفات.</div><?php endif; ?>
       <?php foreach ($files as $f): ?>
       <div class="file-grid-card folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
@@ -1098,6 +1098,10 @@ function drawRegionsMap() {
         <small><?= format_bytes((int)$f['size_bytes']) ?> • <?= htmlspecialchars((string)$f['created_at']) ?></small>
       </div>
       <?php endforeach; ?>
+    </div>
+    <div id="filesInfiniteLoader" class="files-infinite-loader hidden" aria-live="polite">
+      <div class="files-spinner" role="progressbar" aria-label="circular progressbar, single color"></div>
+      <span>جاري تحميل المزيد...</span>
     </div>
     <div id="dragSelectionBox" class="drag-selection-box hidden" aria-hidden="true"></div>
     </div>
@@ -1681,6 +1685,46 @@ ctxMenu?.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',(e
   if(!primary) return;
   submitCmd(btn.dataset.cmd, primary).catch(e=>showToast(e.message,'warn'));
 }));
+
+(function setupInfiniteFilesLoading(){
+  const content=document.querySelector('main.content');
+  const filesGrid=document.getElementById('filesGrid');
+  const loader=document.getElementById('filesInfiniteLoader');
+  if(!content || !filesGrid || !loader) return;
+
+  const cards=Array.from(filesGrid.querySelectorAll('.file-grid-card[data-type="file"]'));
+  const pageSize=24;
+  if(cards.length<=pageSize){
+    loader.classList.add('hidden');
+    return;
+  }
+
+  let visibleCount=pageSize;
+  let loading=false;
+
+  function render(){
+    cards.forEach((card,idx)=>card.classList.toggle('lazy-hidden', idx>=visibleCount));
+    loader.classList.toggle('hidden', visibleCount>=cards.length);
+  }
+
+  async function loadMore(){
+    if(loading || visibleCount>=cards.length) return;
+    loading=true;
+    loader.classList.add('is-loading');
+    await new Promise(r=>setTimeout(r, 320));
+    visibleCount=Math.min(visibleCount+pageSize, cards.length);
+    render();
+    loader.classList.remove('is-loading');
+    loading=false;
+  }
+
+  content.addEventListener('scroll',()=>{
+    const nearBottom=content.scrollTop + content.clientHeight >= content.scrollHeight - 160;
+    if(nearBottom) loadMore();
+  },{passive:true});
+
+  render();
+})();
 </script>
 <?php endif; ?>
 </body>
