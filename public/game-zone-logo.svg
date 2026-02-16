@@ -1,0 +1,19 @@
+<svg width="408" height="84" viewBox="0 0 408 84" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">GAME ZONE logo</title>
+  <desc id="desc">Blue emblem with GAME ZONE text</desc>
+  <rect width="408" height="84" rx="6" fill="white"/>
+  <path d="M8 22L30 2H76L54 22H32L54 42L32 62H76L54 82H30L8 62L30 42L8 22Z" fill="url(#g1)"/>
+  <path d="M83 57V26H108C115 26 120 31 120 38C120 45 115 50 108 50H94V57H83ZM94 42H106C108 42 109 41 109 38C109 35 108 34 106 34H94V42Z" fill="#0E3A62"/>
+  <path d="M126 57L139 26H151L164 57H153L151 51H139L137 57H126ZM142 43H148L145 34L142 43Z" fill="#0E3A62"/>
+  <path d="M167 57V26H179L189 42L199 26H211V57H200V42L192 54H186L178 42V57H167Z" fill="#0E3A62"/>
+  <path d="M216 57V26H254V34H227V38H248V45H227V49H255V57H216Z" fill="#0E3A62"/>
+  <path d="M274 57V26H305V35L288 49H305V57H272V48L289 34H274V26Z" fill="#121212"/>
+  <path d="M309 57V26H347V34H320V38H341V45H320V49H348V57H309Z" fill="#121212"/>
+  <path d="M352 57V26H370L382 45V26H393V57H376L363 38V57H352Z" fill="#121212"/>
+  <defs>
+    <linearGradient id="g1" x1="8" y1="2" x2="76" y2="82" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#78B8F8"/>
+      <stop offset="1" stop-color="#0B5394"/>
+    </linearGradient>
+  </defs>
+</svg>
