@@ -86,3 +86,6 @@ select{border-radius:10px;border:1px solid #d3d8e3;background:#fff;padding:0 10p
 .toast{background:#202124;color:#f9fafb;border:1px solid #3c4043;border-radius:10px;padding:10px 12px;box-shadow:0 8px 24px #0005;transform:translateY(8px);opacity:0;transition:.18s}
 .toast.show{transform:translateY(0);opacity:1}
 .toast-success{border-color:#14532d}.toast-warn{border-color:#7c2d12}
+
+.drop-upload-overlay{position:fixed;inset:0;background:#0b57d033;backdrop-filter:blur(1px);display:flex;align-items:center;justify-content:center;z-index:160}
+.drop-upload-box{background:#0b57d0;color:#fff;border:2px dashed #bcd3ff;border-radius:16px;padding:26px 32px;font-size:24px;font-weight:700;box-shadow:0 12px 28px #00000033}

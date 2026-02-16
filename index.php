@@ -1005,7 +1005,7 @@ function drawRegionsMap() {
     <div class="new-wrap">
       <button id="newBtn" class="new-btn" type="button">＋ جديد</button>
       <div id="newMenu" class="new-menu hidden">
-        <button type="button" data-open="uploadModal">📄 تحميل ملف</button>
+        <button type="button" data-open="uploadFiles">📄 تحميل ملف</button>
         <button type="button" data-open="uploadFolderModal">📁 تحميل مجلد</button>
         <button type="button" data-open="folderModal">📁 مجلد جديد</button>
       </div>
@@ -1032,6 +1032,8 @@ function drawRegionsMap() {
     <?php if ($flash): ?><div class="flash <?= $flash['type'] ?>"><?= htmlspecialchars($flash['msg']) ?></div><?php endif; ?>
 
     <div id="uploadProgress" class="progress hidden"><div id="uploadProgressBar"></div><p id="uploadProgressText">0%</p><p id="uploadSpeedText">0 م.ب/ث</p></div>
+    <input id="quickFileInput" type="file" multiple class="hidden" />
+    <div id="dropUploadOverlay" class="drop-upload-overlay hidden"><div class="drop-upload-box">أفلت الملفات هنا لرفعها مباشرة</div></div>
 
     <div class="section-head"><h2><?= htmlspecialchars($pageTitle) ?></h2><div>☰ ⓘ</div></div>
     <div id="selectionBar" class="selection-bar hidden">
@@ -1076,13 +1078,6 @@ function drawRegionsMap() {
   </main>
 </div>
 
-<div id="uploadModal" class="modal hidden"><div class="modal-box"><button class="close" data-close>×</button><h3>اختر ملفاً لرفعه</h3>
-  <form id="uploadForm" method="post" enctype="multipart/form-data">
-    <input type="hidden" name="action" value="upload_ajax"/><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"/><input type="hidden" name="folder_id" value="<?= $route==='folder'?(int)$currentFolderId:'' ?>"/>
-    <input id="singleFile" type="file" name="file" required>
-    <small>الحد الأقصى للملف الواحد: 5 جيجابايت</small>
-    <button type="submit">رفع الملف</button>
-  </form></div></div>
 
 <div id="uploadFolderModal" class="modal hidden"><div class="modal-box"><button class="close" data-close>×</button><h3>اختر مجلداً لرفعه</h3>
   <form method="post" enctype="multipart/form-data">
@@ -1135,6 +1130,11 @@ const newMenu=document.getElementById('newMenu');
 if(newBtn && newMenu){
   newBtn.addEventListener('click',(e)=>{e.stopPropagation();newMenu.classList.toggle('hidden');});
   document.querySelectorAll('[data-open]').forEach(el=>el.addEventListener('click',()=>{
+    if(el.dataset.open==='uploadFiles'){
+      quickFileInput?.click();
+      newMenu.classList.add('hidden');
+      return;
+    }
     const target=document.getElementById(el.dataset.open);
     if(target) target.classList.remove('hidden');
     newMenu.classList.add('hidden');
@@ -1158,57 +1158,100 @@ folderInput?.addEventListener('change', ()=>{
   });
 });
 
-const uploadForm = document.getElementById('uploadForm');
-const singleFile = document.getElementById('singleFile');
+const quickFileInput = document.getElementById('quickFileInput');
+const dropUploadOverlay = document.getElementById('dropUploadOverlay');
 const pWrap = document.getElementById('uploadProgress');
 const pBar = document.getElementById('uploadProgressBar');
 const pText = document.getElementById('uploadProgressText');
 const pSpeed = document.getElementById('uploadSpeedText');
-uploadForm?.addEventListener('submit',(e)=>{
-  e.preventDefault();
-  if(!singleFile.files.length) return;
-  const f=singleFile.files[0];
-  if(f.size>MAX_FILE){ showToast('الملف أكبر من 5 جيجابايت.','warn'); return; }
+const activeFolderId = <?= $route==='folder' ? (int)$currentFolderId : 'null' ?>;
 
-  document.getElementById('uploadModal')?.classList.add('hidden');
+function buildUploadFormData(file){
+  const fd=new FormData();
+  fd.append('action','upload_ajax');
+  fd.append('redirect', window.location.pathname);
+  fd.append('folder_id', activeFolderId==null ? '' : String(activeFolderId));
+  fd.append('file', file);
+  return fd;
+}
+
+async function uploadSingleFile(file, idx, total){
+  return new Promise((resolve,reject)=>{
+    const xhr=new XMLHttpRequest();
+    xhr.open('POST', window.location.pathname, true);
+    const started=performance.now();
+
+    xhr.upload.onprogress=(ev)=>{
+      if(!ev.lengthComputable) return;
+      const percent=Math.round((ev.loaded/ev.total)*100);
+      pBar.style.width=percent+'%';
+      pText.textContent=`${idx}/${total} • ${percent}%`;
+      const elapsed=Math.max((performance.now()-started)/1000,0.001);
+      const speedMB=(ev.loaded/elapsed)/(1024*1024);
+      pSpeed.textContent=speedMB.toFixed(2)+' م.ب/ث';
+    };
+
+    xhr.onload=()=>{
+      if(xhr.status>=200 && xhr.status<300) resolve();
+      else {
+        try{ const j=JSON.parse(xhr.responseText); reject(new Error(j.message||'فشل الرفع')); }
+        catch(_){ reject(new Error('فشل الرفع')); }
+      }
+    };
+    xhr.onerror=()=>reject(new Error('فشل الاتصال أثناء الرفع.'));
+    xhr.send(buildUploadFormData(file));
+  });
+}
+
+async function uploadFiles(files){
+  const list=[...files];
+  if(!list.length) return;
+  const oversize=list.find(f=>f.size>MAX_FILE);
+  if(oversize){ showToast('يوجد ملف أكبر من 5 جيجابايت.','warn'); return; }
+
   pWrap.classList.remove('hidden');
   pBar.style.width='0%';
   pText.textContent='0%';
   pSpeed.textContent='0 م.ب/ث';
 
-  const fd=new FormData(uploadForm);
-  const xhr=new XMLHttpRequest();
-  xhr.open('POST', window.location.pathname, true);
+  try {
+    for(let i=0;i<list.length;i++) await uploadSingleFile(list[i], i+1, list.length);
+    pBar.style.width='100%';
+    pText.textContent='اكتمل الرفع';
+    pSpeed.textContent=`تم رفع ${list.length} ملف`;
+    setTimeout(()=>location.reload(), 400);
+  } catch (e) {
+    pWrap.classList.add('hidden');
+    showToast(e.message,'warn');
+  }
+}
 
-  let lastTime = performance.now();
-  let lastLoaded = 0;
-  xhr.upload.onprogress=(ev)=>{
-    if(ev.lengthComputable){
-      const percent=Math.round((ev.loaded/ev.total)*100);
-      pBar.style.width=percent+'%';
-      pText.textContent=percent+'%';
+quickFileInput?.addEventListener('change', ()=>{
+  if(!quickFileInput.files?.length) return;
+  uploadFiles(quickFileInput.files);
+  quickFileInput.value='';
+});
 
-      const now = performance.now();
-      const deltaBytes = ev.loaded - lastLoaded;
-      const deltaSec = Math.max((now - lastTime)/1000, 0.001);
-      const speedMB = (deltaBytes / deltaSec) / (1024*1024);
-      pSpeed.textContent = speedMB.toFixed(2) + ' م.ب/ث';
-      lastLoaded = ev.loaded;
-      lastTime = now;
-    }
-  };
-  xhr.onload=()=>{
-    if(xhr.status>=200 && xhr.status<300){
-      pText.textContent='100%';
-      pSpeed.textContent='اكتمل الرفع';
-      location.reload();
-    } else {
-      pWrap.classList.add('hidden');
-      try{const j=JSON.parse(xhr.responseText); showToast(j.message||'فشل الرفع','warn');}catch(_){showToast('فشل الرفع','warn');}
-    }
-  };
-  xhr.onerror=()=>{ pWrap.classList.add('hidden'); showToast('فشل الاتصال أثناء الرفع.','warn'); };
-  xhr.send(fd);
+let dragDepth=0;
+window.addEventListener('dragenter',(e)=>{
+  if(!e.dataTransfer?.types?.includes('Files')) return;
+  dragDepth++;
+  dropUploadOverlay?.classList.remove('hidden');
+});
+window.addEventListener('dragover',(e)=>{
+  if(!e.dataTransfer?.types?.includes('Files')) return;
+  e.preventDefault();
+});
+window.addEventListener('dragleave',()=>{
+  dragDepth=Math.max(0, dragDepth-1);
+  if(dragDepth===0) dropUploadOverlay?.classList.add('hidden');
+});
+window.addEventListener('drop',(e)=>{
+  if(!e.dataTransfer?.files?.length) return;
+  e.preventDefault();
+  dragDepth=0;
+  dropUploadOverlay?.classList.add('hidden');
+  uploadFiles(e.dataTransfer.files);
 });
 
 const ctxMenu=document.getElementById('ctxMenu');
