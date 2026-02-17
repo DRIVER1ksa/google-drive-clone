@@ -156,6 +156,20 @@ function get_client_ip(): string {
     return '0.0.0.0';
 }
 
+
+function upload_error_to_message(int $code): string {
+    return match ($code) {
+        UPLOAD_ERR_INI_SIZE => 'الملف يتجاوز حد upload_max_filesize في PHP.',
+        UPLOAD_ERR_FORM_SIZE => 'الملف يتجاوز الحد المسموح من النموذج.',
+        UPLOAD_ERR_PARTIAL => 'تم رفع الملف جزئياً فقط، حاول مجدداً.',
+        UPLOAD_ERR_NO_FILE => 'لم يتم اختيار ملف للرفع.',
+        UPLOAD_ERR_NO_TMP_DIR => 'مجلد الملفات المؤقتة غير متوفر على الخادم.',
+        UPLOAD_ERR_CANT_WRITE => 'تعذر كتابة الملف على القرص في الخادم.',
+        UPLOAD_ERR_EXTENSION => 'تم إيقاف الرفع بواسطة إضافة في PHP.',
+        default => 'فشل رفع الملف.',
+    };
+}
+
 function get_country_code_from_request(): string {
     $code = strtoupper(trim((string)($_SERVER['HTTP_CF_IPCOUNTRY'] ?? $_SERVER['GEOIP_COUNTRY_CODE'] ?? '')));
     if (preg_match('/^[A-Z]{2}$/', $code)) return $code;
@@ -527,14 +541,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($action === 'upload' || $action === 'upload_ajax' || $action === 'upload_folder') {
-            if (empty($_FILES['file']['name']) && empty($_FILES['files']['name'])) throw new RuntimeException('اختر ملفاً أو مجلداً أولاً.');
+            if (empty($_FILES['file']['name']) && empty($_FILES['files']['name'])) {
+                $contentLength = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
+                $postMax = (string)ini_get('post_max_size');
+                $uploadMax = (string)ini_get('upload_max_filesize');
+                if ($contentLength > 0) {
+                    throw new RuntimeException('فشل الرفع بسبب حدود PHP/الخادم. upload_max_filesize=' . $uploadMax . ' و post_max_size=' . $postMax . '. إذا كان لديك Nginx تأكد من client_max_body_size أيضاً.');
+                }
+                throw new RuntimeException('اختر ملفاً أو مجلداً أولاً.');
+            }
             $currentStorage = get_user_storage($pdo, $user['id']);
             $uploadIp = get_client_ip();
             $uploadCountry = get_country_code_from_request();
 
             $processSingle = function(array $one, ?int $folderId, ?string $displayName=null) use (&$currentStorage, $config, $pdo, $user, $uploadIp, $uploadCountry) {
-                if ($one['error'] !== UPLOAD_ERR_OK) throw new RuntimeException('فشل رفع ملف.');
-                if ((int)$one['size'] > (int)$config['max_upload_size']) throw new RuntimeException('الملف أكبر من 5 جيجابايت.');
+                $err = (int)($one['error'] ?? UPLOAD_ERR_NO_FILE);
+                if ($err !== UPLOAD_ERR_OK) {
+                    $base = upload_error_to_message($err);
+                    $postMax = (string)ini_get('post_max_size');
+                    $uploadMax = (string)ini_get('upload_max_filesize');
+                    throw new RuntimeException($base . ' (upload_max_filesize=' . $uploadMax . ', post_max_size=' . $postMax . ')');
+                }
+                if ((int)$one['size'] > (int)$config['max_upload_size']) throw new RuntimeException('الملف أكبر من 5 جيجابايت (حد التطبيق).');
                 if (($currentStorage + (int)$one['size']) > USER_STORAGE_LIMIT) throw new RuntimeException('تم تجاوز سعة المستخدم 1 تيرابايت.');
                 $name = $displayName ?: (string)$one['name'];
                 if (!is_extension_allowed($pdo, $name)) throw new RuntimeException('امتداد الملف غير مسموح به من الإدارة.');
