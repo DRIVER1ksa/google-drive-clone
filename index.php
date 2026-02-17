@@ -307,6 +307,12 @@ $path = trim($uri, '/');
 $segments = $path === '' ? [] : explode('/', $path);
 $cssVersion = @filemtime(__DIR__ . '/public/assets/style.css') ?: time();
 
+if (!empty($segments[0]) && $segments[0] === 'drive') {
+    $q = $_SERVER['QUERY_STRING'] ?? '';
+    header('Location: /files' . ($q ? ('?' . $q) : ''));
+    exit;
+}
+
 if (!empty($segments[0]) && $segments[0] === 's' && isset($segments[1])) {
     if (!$pdo) { http_response_code(500); exit('DB error'); }
     $part = $segments[1];
@@ -396,9 +402,10 @@ if (!empty($segments[0]) && $segments[0] === 'logout') {
 
 $route = 'login';
 $currentFolderId = null;
-if (empty($segments)) $route = empty($_SESSION['user']) ? 'login' : 'drive';
+if (empty($segments)) $route = 'home';
 elseif ($segments[0] === 'login') $route = 'login';
-elseif ($segments[0] === 'drive' || $segments[0] === 'home') $route = 'drive';
+elseif ($segments[0] === 'files') $route = 'files';
+elseif ($segments[0] === 'home') $route = 'home';
 elseif ($segments[0] === 'trash') $route = 'trash';
 elseif ($segments[0] === 'search') $route = 'search';
 elseif ($segments[0] === 'folders' && isset($segments[1])) { $route = 'folder'; $currentFolderId = (int)$segments[1]; }
@@ -420,13 +427,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $xf = xf_auth($config, trim($_POST['username'] ?? ''), (string)($_POST['password'] ?? ''));
             if (!$xf) throw new RuntimeException('فشل تسجيل الدخول عبر XenForo API.');
             $_SESSION['user'] = $xf;
-            header('Location: /drive'); exit;
+            header('Location: /files'); exit;
         }
 
         require_login();
         if (!$pdo) throw new RuntimeException('قاعدة البيانات غير متاحة حالياً.');
         $user = $_SESSION['user'];
-        $redirect = $_POST['redirect'] ?? '/drive';
+        $redirect = $_POST['redirect'] ?? '/files';
 
         if (str_starts_with($action, 'admin_')) {
             require_admin($config);
@@ -706,7 +713,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $user = $_SESSION['user'] ?? null;
-if ($route !== 'login') require_login();
+if (!in_array($route, ['login','home'], true)) require_login();
 if (str_starts_with($route, 'admin')) require_admin($config);
 
 $files = [];
@@ -715,6 +722,9 @@ $allFolders = [];
 $storage = 0;
 $search = trim((string)($_GET['q'] ?? ''));
 $pageTitle = 'ملفاتي';
+$sharedFiles = [];
+$sharedFolders = [];
+$sharedFolderFilter = isset($_GET['sfolder']) ? max(0, (int)$_GET['sfolder']) : 0;
 $adminStats = ['files'=>0,'users'=>0,'shared'=>0,'size'=>0,'downloads'=>0];
 $adminFiles = [];
 $adminUsers = [];
@@ -749,6 +759,19 @@ if ($user && str_starts_with($route, 'admin') && $pdo) {
     $pageTitle = 'لوحة تحكم الإدارة';
 }
 
+if ($route === 'home' && $pdo) {
+    $sharedFolders = $pdo->query("SELECT f.folder_id, COALESCE(fd.name,'مجلد') AS folder_name, COUNT(*) AS files_count FROM files f LEFT JOIN folders fd ON fd.id=f.folder_id WHERE f.shared_token IS NOT NULL AND f.is_trashed=0 AND f.folder_id IS NOT NULL GROUP BY f.folder_id, fd.name ORDER BY folder_name ASC")->fetchAll();
+
+    if ($sharedFolderFilter > 0) {
+        $stShared = $pdo->prepare('SELECT id,filename,mime_type,size_bytes,created_at,shared_token,folder_id,user_name FROM files WHERE shared_token IS NOT NULL AND is_trashed=0 AND folder_id=? ORDER BY created_at DESC LIMIT 600');
+        $stShared->execute([$sharedFolderFilter]);
+    } else {
+        $stShared = $pdo->query('SELECT id,filename,mime_type,size_bytes,created_at,shared_token,folder_id,user_name FROM files WHERE shared_token IS NOT NULL AND is_trashed=0 ORDER BY created_at DESC LIMIT 600');
+    }
+    $sharedFiles = $stShared->fetchAll();
+    $pageTitle = 'الرئيسية';
+}
+
 if ($user && $route !== 'login' && !str_starts_with($route, 'admin') && $pdo) {
     $storage = get_user_storage($pdo, $user['id']);
 
@@ -756,7 +779,7 @@ if ($user && $route !== 'login' && !str_starts_with($route, 'admin') && $pdo) {
     $all->execute([$user['id']]);
     $allFolders = $all->fetchAll();
 
-    if (in_array($route, ['drive','folder'], true)) {
+    if (in_array($route, ['files','folder'], true)) {
         $parent = $route === 'folder' ? $currentFolderId : null;
         $fdr = $pdo->prepare("SELECT f.*, 
             (SELECT relative_path FROM files x WHERE x.user_id=f.user_id AND x.folder_id=f.id AND x.is_trashed=0 AND x.mime_type LIKE 'image/%' ORDER BY x.created_at DESC LIMIT 1) preview_image,
@@ -770,7 +793,7 @@ if ($user && $route !== 'login' && !str_starts_with($route, 'admin') && $pdo) {
     if ($route === 'trash') $where .= ' AND is_trashed=1'; else $where .= ' AND is_trashed=0';
     if ($route === 'search') $where .= ' AND filename LIKE :search';
     if ($route === 'folder') $where .= ' AND folder_id=:folder';
-    if ($route === 'drive') $where .= ' AND folder_id IS NULL';
+    if ($route === 'files') $where .= ' AND folder_id IS NULL';
 
     $st = $pdo->prepare("SELECT * FROM files WHERE $where ORDER BY created_at DESC");
     $st->bindValue(':uid', $user['id']);
@@ -779,7 +802,7 @@ if ($user && $route !== 'login' && !str_starts_with($route, 'admin') && $pdo) {
     $st->execute();
     $files = $st->fetchAll();
 
-    $map = ['drive'=>'ملفاتي','trash'=>'سلة المحذوفات','search'=>'نتائج البحث','folder'=>'مجلد'];
+    $map = ['files'=>'ملفاتي','trash'=>'سلة المحذوفات','search'=>'نتائج البحث','folder'=>'مجلد'];
     $pageTitle = $map[$route] ?? 'ملفاتي';
 }
 
@@ -796,7 +819,62 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
   <link rel="stylesheet" href="/public/assets/style.css?v=<?= $cssVersion ?>" />
 </head>
 <body>
-<?php if ($route === 'login'): ?>
+<?php if ($route === 'home'): ?>
+<header class="topbar"> 
+  <div class="brand"><img src="/public/game-zone-logo.svg" alt="GAME ZONE"/><span>الرئيسية</span></div>
+  <form class="search" method="get" action="/"><input name="q" placeholder="الملفات المشتركة" value=""/></form>
+  <div class="profile"><a class="header-logout" href="/files">ملفاتي</a><a class="header-logout" href="/login">تسجيل الدخول</a></div>
+</header>
+<div class="layout">
+  <aside class="sidebar modern-sidebar">
+    <nav class="sidebar-nav">
+      <a href="/" class="active"><i class="fas fa-house"></i><span>الرئيسية</span></a>
+      <a href="/files"><i class="far fa-folder-open"></i><span>ملفاتي</span></a>
+    </nav>
+    <div class="storage-card"><p>هذه الصفحة تعرض كل ما قام المستخدمون بمشاركته للعامة.</p></div>
+  </aside>
+  <main class="content">
+    <div class="section-head"><h2>الملفات والمجلدات المشتركة</h2></div>
+    <?php if ($sharedFolders): ?>
+    <div class="folders-grid">
+      <div class="folder-card" onclick="location.href='/'" style="cursor:pointer"><div class="folder-placeholder"><i class="fas fa-layer-group"></i></div><strong>كل المجلدات</strong></div>
+      <?php foreach ($sharedFolders as $sf): ?>
+      <div class="folder-card" onclick="location.href='/?sfolder=<?= (int)$sf['folder_id'] ?>'" style="cursor:pointer">
+        <div class="folder-placeholder"><i class="fas fa-folder"></i></div>
+        <strong><?= htmlspecialchars($sf['folder_name']) ?></strong>
+      </div>
+      <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+    <div class="files-grid">
+      <?php if (!$sharedFiles): ?><div class="empty">لا توجد ملفات مشتركة حالياً.</div><?php endif; ?>
+      <?php foreach ($sharedFiles as $f): ?>
+      <?php $surl = share_url((string)$f['shared_token'], (string)$f['filename']); ?>
+      <div class="file-grid-card folder-card">
+        <div class="file-grid-thumb-link">
+          <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars($surl) ?>" alt="thumb" />
+          <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
+        </div>
+        <strong><?= htmlspecialchars($f['filename']) ?></strong>
+        <small><?= format_bytes((int)$f['size_bytes']) ?> • <?= htmlspecialchars((string)$f['user_name']) ?></small>
+        <div class="selection-actions" style="margin-top:6px">
+          <button type="button" class="copy-share-btn" data-share-url="<?= htmlspecialchars($surl) ?>"><i class="fas fa-link"></i><span>نسخ الرابط</span></button>
+          <a href="<?= htmlspecialchars($surl) ?>?download=1" target="_blank" class="new-btn" style="height:34px;display:inline-flex;align-items:center;gap:6px"><i class="fas fa-download"></i><span>تنزيل</span></a>
+        </div>
+      </div>
+      <?php endforeach; ?>
+    </div>
+  </main>
+</div>
+<script>
+document.querySelectorAll('.copy-share-btn').forEach(btn=>btn.addEventListener('click', async ()=>{
+  const full=window.location.origin + (btn.dataset.shareUrl||'');
+  try{ await navigator.clipboard.writeText(full); }catch(e){}
+  const span=btn.querySelector('span');
+  if(span){ span.textContent='تم النسخ'; setTimeout(()=>span.textContent='نسخ الرابط', 1200); }
+}));
+</script>
+<?php elseif ($route === 'login'): ?>
 <main class="login-wrap">
   <section class="login-card">
     <img src="/public/drive.svg" class="logo" alt="logo" />
@@ -885,7 +963,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
     <a class="<?= $route==='admin_files'?'active':'' ?>" href="/admin/files"><i class="fas fa-file-archive"></i> إدارة الملفات</a>
     <a class="<?= $route==='admin_images'?'active':'' ?>" href="/admin/images"><i class="fas fa-images"></i> إدارة الصور</a>
     <a class="<?= $route==='admin_settings'?'active':'' ?>" href="/admin/settings"><i class="fas fa-cog"></i> الإعدادات</a>
-    <a href="/drive"><i class="fas fa-arrow-right"></i> العودة للدرايف</a>
+    <a href="/files"><i class="fas fa-arrow-right"></i> العودة للملفات</a>
     <a href="/logout"><i class="fas fa-sign-out-alt"></i> خروج</a>
   </aside>
   <main class="admin-main">
@@ -1180,7 +1258,8 @@ function drawRegionsMap() {
     </div>
 
     <nav class="sidebar-nav">
-      <a href="/drive" class="<?= $route==='drive'?'active':'' ?>"><i class="far fa-folder-open"></i><span>ملفاتي</span></a>
+      <a href="/" class="<?= $route==='home'?'active':'' ?>"><i class="fas fa-house"></i><span>الرئيسية</span></a>
+      <a href="/files" class="<?= $route==='files'?'active':'' ?>"><i class="far fa-folder-open"></i><span>ملفاتي</span></a>
       <a href="/trash" class="<?= $route==='trash'?'active':'' ?>"><i class="far fa-trash-alt"></i><span>سلة المحذوفات</span></a>
       <a href="#" onclick="return false;"><i class="fas fa-hdd"></i><span>التخزين</span></a>
     </nav>
@@ -1253,7 +1332,7 @@ function drawRegionsMap() {
 
 <div id="uploadFolderModal" class="modal hidden"><div class="modal-box"><button class="close" data-close>×</button><h3>اختر مجلداً لرفعه</h3>
   <form method="post" enctype="multipart/form-data">
-    <input type="hidden" name="action" value="upload_folder"/><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"/><input type="hidden" name="folder_id" value="<?= $route==='folder'?(int)$currentFolderId:'' ?>"/>
+    <input type="hidden" name="action" value="upload_folder"/><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/files') ?>"/><input type="hidden" name="folder_id" value="<?= $route==='folder'?(int)$currentFolderId:'' ?>"/>
     <input type="file" id="folderInput" name="files[]" webkitdirectory directory multiple required>
     <div id="relativePathsContainer"></div>
     <button type="submit">تحميل المجلد</button>
@@ -1261,7 +1340,7 @@ function drawRegionsMap() {
 
 <div id="folderModal" class="modal hidden"><div class="modal-box"><button class="close" data-close>×</button><h3>إنشاء مجلد جديد</h3>
   <form method="post">
-    <input type="hidden" name="action" value="create_folder"/><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"/><input type="hidden" name="folder_id" value="<?= $route==='folder'?(int)$currentFolderId:'' ?>"/>
+    <input type="hidden" name="action" value="create_folder"/><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/files') ?>"/><input type="hidden" name="folder_id" value="<?= $route==='folder'?(int)$currentFolderId:'' ?>"/>
     <input name="folder_name" placeholder="اسم المجلد" required>
     <button type="submit">إنشاء</button>
   </form></div></div>
@@ -1325,7 +1404,7 @@ function drawRegionsMap() {
 </div>
 
 <form id="cmdForm" method="post" class="hidden">
-  <input type="hidden" name="action" id="cmdAction"><input type="hidden" name="id" id="cmdId"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><input type="hidden" name="new_name" id="cmdName">
+  <input type="hidden" name="action" id="cmdAction"><input type="hidden" name="id" id="cmdId"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/files') ?>"><input type="hidden" name="new_name" id="cmdName">
 </form>
 
 <div id="toastRoot" class="toast-root" aria-live="polite" aria-atomic="true"></div>
