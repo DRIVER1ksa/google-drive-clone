@@ -1192,6 +1192,20 @@ function drawRegionsMap() {
 
     <div id="uploadProgress" class="progress hidden"><div id="uploadProgressBar"></div><p id="uploadProgressText">0%</p><p id="uploadSpeedText">0 م.ب/ث</p></div>
 
+    <div id="selectionBar" class="selection-bar hidden sidebar-selection-bar">
+      <div class="selection-count"><span id="selectionCount">0</span> عنصر محدد</div>
+      <div class="selection-actions">
+        <button type="button" data-select-cmd="download"><i class="fas fa-download"></i><span>تنزيل</span></button>
+        <button type="button" data-select-cmd="rename"><i class="fas fa-pen"></i><span>إعادة تسمية</span></button>
+        <button type="button" data-select-cmd="share"><i class="fas fa-share-alt"></i><span>مشاركة</span></button>
+        <button type="button" data-select-cmd="move"><i class="fas fa-folder-open"></i><span>نقل</span></button>
+        <button type="button" data-select-cmd="copy"><i class="fas fa-link"></i><span>نسخ الرابط</span></button>
+        <button type="button" data-select-cmd="delete"><i class="fas fa-trash-alt"></i><span>نقل للمهملات</span></button>
+      </div>
+      <div id="selectionMeta" class="selection-meta"></div>
+    </div>
+
+
     <a class="logout" href="/logout"><i class="fas fa-sign-out-alt"></i> خروج</a>
   </aside>
 
@@ -1203,18 +1217,6 @@ function drawRegionsMap() {
     <div id="dropUploadOverlay" class="drop-upload-overlay hidden"><div class="drop-upload-box">أفلت الملفات هنا لرفعها مباشرة</div></div>
 
     <div class="section-head"><h2><?= htmlspecialchars($pageTitle) ?></h2><?php if ($route==='trash'): ?><button type="button" id="emptyTrashBtn" class="danger-btn"><i class="fas fa-trash"></i> حذف نهائي لكل الملفات</button><?php endif; ?></div>
-    <div id="selectionBar" class="selection-bar hidden">
-      <div class="selection-count"><span id="selectionCount">0</span> تم اختيار ملف</div>
-      <div class="selection-actions">
-        <button type="button" data-select-cmd="download">⤓ تنزيل</button>
-        <button type="button" data-select-cmd="rename">✎ إعادة تسمية</button>
-        <button type="button" data-select-cmd="share">👥 مشاركة</button>
-                <button type="button" data-select-cmd="move">📁 نقل</button>
-        <button type="button" data-select-cmd="copy">🔗 نسخ الرابط</button>
-        <button type="button" data-select-cmd="delete">🗑 نقل للمهملات</button>
-      </div>
-      <div id="selectionMeta" class="selection-meta"></div>
-    </div>
 
     <div id="selectionSurface" class="selection-surface">
     <div class="folders-grid">
