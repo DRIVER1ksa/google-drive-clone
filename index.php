@@ -966,7 +966,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
   <link rel="stylesheet" href="/public/assets/style.css?v=<?= $cssVersion ?>" />
 </head>
 <body>
-<?php if ($route === 'home'): ?>
+<?php if ($route === 'home' && !$user): ?>
 <header class="topbar"> 
   <div class="brand"><img src="/public/game-zone-logo.svg" alt="GAME ZONE"/><span>الرئيسية</span></div>
   <form class="search" method="get" action="/home"><input name="q" placeholder="الملفات المشتركة" value=""/></form>
@@ -1456,6 +1456,38 @@ function drawRegionsMap() {
     <div class="section-head"><h2><?= htmlspecialchars($pageTitle) ?></h2><?php if ($route==='trash'): ?><button type="button" id="emptyTrashBtn" class="danger-btn"><i class="fas fa-trash"></i> حذف نهائي لكل الملفات</button><?php endif; ?></div>
 
     <div id="selectionSurface" class="selection-surface">
+    <?php if ($route === 'home'): ?>
+    <?php if ($sharedFolders): ?>
+    <div class="folders-grid">
+      <div class="folder-card" onclick="location.href='/home'" style="cursor:pointer"><div class="folder-placeholder"><i class="fas fa-layer-group"></i></div><strong>كل المجلدات</strong></div>
+      <?php foreach ($sharedFolders as $sf): ?>
+      <div class="folder-card" onclick="location.href='/home?sfolder=<?= (int)$sf['folder_id'] ?>'" style="cursor:pointer">
+        <div class="folder-placeholder"><i class="fas fa-folder"></i></div>
+        <strong><?= htmlspecialchars($sf['folder_name']) ?></strong>
+      </div>
+      <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+
+    <div class="files-grid" id="filesGrid">
+      <?php if (!$sharedFiles): ?><div class="empty">لا توجد ملفات مشتركة حالياً.</div><?php endif; ?>
+      <?php foreach ($sharedFiles as $f): ?>
+      <?php $surl = share_url((string)$f['shared_token'], (string)$f['filename']); ?>
+      <div class="file-grid-card folder-card">
+        <div class="file-grid-thumb-link">
+          <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars($surl) ?>" alt="thumb" />
+          <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
+        </div>
+        <strong><?= htmlspecialchars($f['filename']) ?></strong>
+        <small><?= format_bytes((int)$f['size_bytes']) ?> • <?= htmlspecialchars((string)$f['user_name']) ?></small>
+        <div class="selection-actions" style="margin-top:6px">
+          <button type="button" class="copy-share-btn" data-share-url="<?= htmlspecialchars($surl) ?>"><i class="fas fa-link"></i><span>نسخ الرابط</span></button>
+          <a href="<?= htmlspecialchars($surl) ?>?download=1" target="_blank" class="new-btn" style="height:34px;display:inline-flex;align-items:center;gap:6px"><i class="fas fa-download"></i><span>تنزيل</span></a>
+        </div>
+      </div>
+      <?php endforeach; ?>
+    </div>
+    <?php else: ?>
     <div class="folders-grid">
       <?php foreach ($folders as $fd): ?>
       <div class="folder-card" data-type="folder" data-id="<?= (int)$fd['id'] ?>" data-name="<?= htmlspecialchars($fd['name']) ?>" data-home-shared="<?= !empty($fd['home_shared']) ? '1':'0' ?>" data-href="/folders/<?= (int)$fd['id'] ?>">
@@ -1478,6 +1510,7 @@ function drawRegionsMap() {
       </div>
       <?php endforeach; ?>
     </div>
+    <?php endif; ?>
     <div id="filesInfiniteLoader" class="files-infinite-loader hidden" aria-live="polite">
       <div class="files-spinner" role="progressbar" aria-label="circular progressbar, single color"></div>
       <span>جاري تحميل المزيد...</span>
@@ -1648,6 +1681,8 @@ const pBar = document.getElementById('uploadProgressBar');
 const pText = document.getElementById('uploadProgressText');
 const pSpeed = document.getElementById('uploadSpeedText');
 const activeFolderId = <?= $route==='folder' ? (int)$currentFolderId : 'null' ?>;
+const UPLOAD_ENDPOINT = '/files';
+let uploadInProgress = false;
 
 
 const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB
@@ -1668,7 +1703,7 @@ async function postChunk(uploadId, file, chunkIndex, totalChunks){
   fd.append('chunk_index', String(chunkIndex));
   fd.append('total_chunks', String(totalChunks));
   fd.append('chunk', blob, file.name+`.part${chunkIndex}`);
-  const r=await fetch(window.location.pathname,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd});
+  const r=await fetch(UPLOAD_ENDPOINT,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd});
   const j=await r.json().catch(()=>({ok:false,message:'فشل رفع جزء من الملف'}));
   if(!r.ok || !j.ok) throw new Error(j.message||'فشل رفع جزء من الملف');
   return blob.size;
@@ -1684,7 +1719,7 @@ async function finalizeChunkUpload(uploadId, file, relativePath=''){
   fd.append('size', String(file.size));
   fd.append('relative_path', relativePath||'');
   fd.append('folder_id', activeFolderId==null ? '' : String(activeFolderId));
-  const r=await fetch(window.location.pathname,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd});
+  const r=await fetch(UPLOAD_ENDPOINT,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd});
   const j=await r.json().catch(()=>({ok:false,message:'فشل إنهاء رفع الملف'}));
   if(!r.ok || !j.ok) throw new Error(j.message||'فشل إنهاء رفع الملف');
 }
@@ -1714,6 +1749,7 @@ async function uploadBatch(files, isFolder=false){
   let uploadedBytes=0;
   const started=performance.now();
 
+  uploadInProgress = true;
   pWrap.classList.remove('hidden');
   pBar.style.width='0%';
   pText.textContent='0%';
@@ -1742,12 +1778,25 @@ async function uploadBatch(files, isFolder=false){
     pBar.style.width='100%';
     pText.textContent=isFolder ? 'اكتمل رفع المجلد' : 'اكتمل الرفع';
     pSpeed.textContent=`تم رفع ${list.length} ملف`;
-    setTimeout(()=>location.reload(), 400);
+    uploadInProgress = false;
+    setTimeout(()=>{ if(window.location.pathname==='/files' || window.location.pathname.startsWith('/folders/')) location.reload(); }, 400);
   } catch (e) {
+    uploadInProgress = false;
     pWrap.classList.add('hidden');
     showToast(e.message,'warn');
   }
 }
+
+document.addEventListener('click', (e)=>{
+  if(!uploadInProgress) return;
+  const link=e.target.closest('a[href^="/"]');
+  if(!link) return;
+  const href=link.getAttribute('href') || '';
+  if(!href || href==='/logout' || link.target==='_blank') return;
+  e.preventDefault();
+  window.open(href, '_blank', 'noopener');
+  showToast('الرفع مستمر في هذه الصفحة. تم فتح الصفحة المطلوبة في تبويب جديد.','info');
+}, true);
 
 quickFileInput?.addEventListener('change', ()=>{
   if(!quickFileInput.files?.length) return;
@@ -2304,6 +2353,13 @@ shareHomeToggle?.addEventListener('change', async ()=>{
     showToast(e.message,'warn');
   }
 });
+
+document.querySelectorAll('.copy-share-btn').forEach(btn=>btn.addEventListener('click', async ()=>{
+  const full=window.location.origin + (btn.dataset.shareUrl||'');
+  try{ await navigator.clipboard.writeText(full); }catch(e){}
+  const span=btn.querySelector('span');
+  if(span){ span.textContent='تم النسخ'; setTimeout(()=>span.textContent='نسخ الرابط', 1200); }
+}));
 
 shareCopyBtn?.addEventListener('click', async ()=>{
   const primary=getPrimary();
