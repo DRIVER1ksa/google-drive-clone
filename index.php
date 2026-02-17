@@ -1813,22 +1813,29 @@ function intersects(r1,r2){
 
 selectionSurface?.addEventListener('mousedown',(e)=>{
   if(e.button!==0) return;
-  if(e.target.closest('[data-type],button,a,input,select,textarea,form,#ctxMenu,.modal-box')) return;
+  if(e.target.closest('button,a,input,select,textarea,form,#ctxMenu,.modal-box')) return;
   const surfaceRect=selectionSurface.getBoundingClientRect();
   dragState={start:{x:e.clientX,y:e.clientY},surfaceRect,dragged:false};
-  dragSelectionBox.classList.remove('hidden');
-  dragSelectionBox.style.left=(e.clientX-surfaceRect.left+selectionSurface.scrollLeft)+'px';
-  dragSelectionBox.style.top=(e.clientY-surfaceRect.top+selectionSurface.scrollTop)+'px';
-  dragSelectionBox.style.width='0px';
-  dragSelectionBox.style.height='0px';
-  setSelected([]);
-  e.preventDefault();
+  if(dragSelectionBox){
+    dragSelectionBox.classList.add('hidden');
+    dragSelectionBox.style.left=(e.clientX-surfaceRect.left+selectionSurface.scrollLeft)+'px';
+    dragSelectionBox.style.top=(e.clientY-surfaceRect.top+selectionSurface.scrollTop)+'px';
+    dragSelectionBox.style.width='0px';
+    dragSelectionBox.style.height='0px';
+  }
 });
 
 document.addEventListener('mousemove',(e)=>{
   if(!dragState || !selectionSurface || !dragSelectionBox) return;
   const rect=getRectFromPoints(dragState.start,{x:e.clientX,y:e.clientY});
-  if(rect.width>3 || rect.height>3) dragState.dragged=true;
+
+  if(!dragState.dragged && (rect.width>3 || rect.height>3)){
+    dragState.dragged=true;
+    setSelected([]);
+    dragSelectionBox.classList.remove('hidden');
+  }
+  if(!dragState.dragged) return;
+
   dragSelectionBox.style.left=(rect.left-dragState.surfaceRect.left+selectionSurface.scrollLeft)+'px';
   dragSelectionBox.style.top=(rect.top-dragState.surfaceRect.top+selectionSurface.scrollTop)+'px';
   dragSelectionBox.style.width=rect.width+'px';
