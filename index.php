@@ -416,7 +416,7 @@ if (!empty($segments[0]) && $segments[0] === 'logout') {
 
 $route = 'login';
 $currentFolderId = null;
-if (empty($segments)) $route = 'home';
+if (empty($segments)) $route = empty($_SESSION['user']) ? 'login' : 'files';
 elseif ($segments[0] === 'login') $route = 'login';
 elseif ($segments[0] === 'files') $route = 'files';
 elseif ($segments[0] === 'home') $route = 'home';
@@ -918,7 +918,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
 <?php if ($route === 'home'): ?>
 <header class="topbar"> 
   <div class="brand"><img src="/public/game-zone-logo.svg" alt="GAME ZONE"/><span>الرئيسية</span></div>
-  <form class="search" method="get" action="/"><input name="q" placeholder="الملفات المشتركة" value=""/></form>
+  <form class="search" method="get" action="/home"><input name="q" placeholder="الملفات المشتركة" value=""/></form>
   <div class="profile">
     <?php if ($user): ?>
       <img width="38" height="38" src="<?= htmlspecialchars($user['avatar'] ?: '/public/myimg.png') ?>" alt="avatar"/>
@@ -934,7 +934,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
 <div class="layout">
   <aside class="sidebar modern-sidebar">
     <nav class="sidebar-nav">
-      <a href="/" class="active"><i class="fas fa-house"></i><span>الرئيسية</span></a>
+      <a href="/home" class="active"><i class="fas fa-house"></i><span>الرئيسية</span></a>
       <?php if ($user): ?><a href="/files"><i class="far fa-folder-open"></i><span>ملفاتي</span></a><?php else: ?><a href="/login"><i class="fas fa-sign-in-alt"></i><span>تسجيل الدخول</span></a><?php endif; ?>
     </nav>
     <div class="storage-card"><p>هذه الصفحة تعرض كل ما قام المستخدمون بمشاركته للعامة.</p></div>
@@ -943,9 +943,9 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
     <div class="section-head"><h2>الملفات والمجلدات المشتركة</h2></div>
     <?php if ($sharedFolders): ?>
     <div class="folders-grid">
-      <div class="folder-card" onclick="location.href='/'" style="cursor:pointer"><div class="folder-placeholder"><i class="fas fa-layer-group"></i></div><strong>كل المجلدات</strong></div>
+      <div class="folder-card" onclick="location.href='/home'" style="cursor:pointer"><div class="folder-placeholder"><i class="fas fa-layer-group"></i></div><strong>كل المجلدات</strong></div>
       <?php foreach ($sharedFolders as $sf): ?>
-      <div class="folder-card" onclick="location.href='/?sfolder=<?= (int)$sf['folder_id'] ?>'" style="cursor:pointer">
+      <div class="folder-card" onclick="location.href='/home?sfolder=<?= (int)$sf['folder_id'] ?>'" style="cursor:pointer">
         <div class="folder-placeholder"><i class="fas fa-folder"></i></div>
         <strong><?= htmlspecialchars($sf['folder_name']) ?></strong>
       </div>
@@ -1364,7 +1364,7 @@ function drawRegionsMap() {
     </div>
 
     <nav class="sidebar-nav">
-      <a href="/" class="<?= $route==='home'?'active':'' ?>"><i class="fas fa-house"></i><span>الرئيسية</span></a>
+      <a href="/home" class="<?= $route==='home'?'active':'' ?>"><i class="fas fa-house"></i><span>الرئيسية</span></a>
       <a href="/files" class="<?= $route==='files'?'active':'' ?>"><i class="far fa-folder-open"></i><span>ملفاتي</span></a>
       <a href="/trash" class="<?= $route==='trash'?'active':'' ?>"><i class="far fa-trash-alt"></i><span>سلة المحذوفات</span></a>
       <a href="#" onclick="return false;"><i class="fas fa-hdd"></i><span>التخزين</span></a>
