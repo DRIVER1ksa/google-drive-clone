@@ -732,7 +732,7 @@ if ($user && str_starts_with($route, 'admin') && $pdo) {
         'size' => (int)$pdo->query('SELECT COALESCE(SUM(size_bytes),0) FROM files')->fetchColumn(),
         'downloads' => (int)$pdo->query('SELECT COALESCE(SUM(download_count),0) FROM files')->fetchColumn(),
     ];
-    $adminFiles = $pdo->query('SELECT id,user_id,user_name,filename,mime_type,size_bytes,folder_id,shared_token,is_trashed,created_at,uploader_country FROM files ORDER BY created_at DESC LIMIT 800')->fetchAll();
+    $adminFiles = $pdo->query("SELECT id,user_id,user_name,filename,mime_type,size_bytes,folder_id,shared_token,is_trashed,created_at,uploader_country,relative_path FROM files WHERE (mime_type NOT LIKE 'image/%' OR mime_type IS NULL OR mime_type='') ORDER BY created_at DESC LIMIT 800")->fetchAll();
     $adminUsers = $pdo->query('SELECT user_id, MIN(user_name) user_name, COUNT(*) files_count, COALESCE(SUM(size_bytes),0) total_size FROM files GROUP BY user_id ORDER BY files_count DESC LIMIT 500')->fetchAll();
     $adminFolders = $pdo->query('SELECT id,name,user_id FROM folders ORDER BY id DESC LIMIT 1000')->fetchAll();
 
@@ -742,7 +742,7 @@ if ($user && str_starts_with($route, 'admin') && $pdo) {
     $stMonth = $pdo->query("SELECT DATE_FORMAT(created_at, '%Y-%m') month_key, COUNT(*) files_count FROM files GROUP BY DATE_FORMAT(created_at, '%Y-%m') ORDER BY month_key ASC LIMIT 12");
     $adminUploadsByMonth = $stMonth->fetchAll();
 
-    $stImages = $pdo->query("SELECT id,filename,relative_path,size_bytes,user_name,user_id,created_at FROM files WHERE mime_type LIKE 'image/%' AND is_trashed=0 ORDER BY created_at DESC LIMIT 120");
+    $stImages = $pdo->query("SELECT id,filename,relative_path,size_bytes,user_name,user_id,created_at,shared_token FROM files WHERE mime_type LIKE 'image/%' AND is_trashed=0 ORDER BY created_at DESC LIMIT 120");
     $adminImageFiles = $stImages->fetchAll();
 
     $allowedExtDisplay = get_setting($pdo, 'allowed_extensions', '*') ?: '*';
@@ -840,7 +840,8 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
 .admin-shell{display:grid;grid-template-columns:270px 1fr;gap:14px;min-height:calc(100vh - 0px);padding:14px}
 .admin-side{background:#1f2933;color:#d5dbe2;padding:18px 14px;border-radius:14px;border:1px solid #2e3743;box-shadow:0 10px 24px #00000022}
 .admin-side h2{margin:0 0 16px;font-size:30px;color:#fff}
-.admin-side a{display:block;color:#d5dbe2;text-decoration:none;padding:10px 8px;border-radius:8px;margin-bottom:4px}
+.admin-side a{display:flex;align-items:center;gap:8px;color:#d5dbe2;text-decoration:none;padding:10px 8px;border-radius:8px;margin-bottom:4px}
+.admin-side a i{width:18px;text-align:center}
 .admin-side a:hover,.admin-side a.active{background:#323f4b}
 .admin-main{padding:18px;background:#eef2f5}
 .admin-top{display:flex;justify-content:space-between;align-items:center;background:#fff;border:1px solid #d7dde3;border-radius:10px;padding:12px 16px;margin-bottom:14px}
@@ -856,18 +857,36 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
 .image-card{background:#fff;border:1px solid #d7dde3;border-radius:10px;overflow:hidden}
 .image-card img{width:100%;height:230px;object-fit:cover;background:#111}
 .image-meta{padding:8px;font-size:12px;line-height:1.5}
+
+.admin-hint{color:#64748b;margin:8px 0 14px}
+.admin-files-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+.admin-file-card{background:linear-gradient(180deg,#fff,#f8fafc);border:1px solid #d8e2ee;border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:8px;cursor:default;transition:.18s}
+.admin-file-card:hover{transform:translateY(-2px);box-shadow:0 10px 20px #0b57d01a}
+.admin-file-card strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px}
+.admin-file-card small{color:#64748b;font-size:12px}
+.admin-card-icon{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:#e8f0fe;color:#0b57d0;font-size:20px}
+.admin-file-card.is-selected{outline:2px solid #0b57d0;background:#eaf1ff}
+.admin-selection-surface{position:relative}
+.admin-drag-selection-box{position:absolute;border:2px solid #7aa2ff;background:#7aa2ff44;border-radius:6px;pointer-events:none;z-index:6}
+.admin-selection-meta{background:#1f2937;color:#f8fafc;border-radius:10px;padding:8px 10px;margin-bottom:10px;font-size:13px}
+.admin-ctx-menu{position:fixed;z-index:1200;min-width:220px;background:#243248;color:#e5edf7;border:1px solid #3f536f;border-radius:12px;padding:6px;box-shadow:0 20px 40px #0006}
+.admin-ctx-menu button{width:100%;height:40px;border:0;background:transparent;color:inherit;border-radius:8px;display:flex;align-items:center;gap:10px;padding:0 10px;text-align:right}
+.admin-ctx-menu button:hover{background:#334760}
+.admin-ctx-menu i{width:18px;text-align:center}
+.admin-image-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+.admin-image-grid .image-card img{height:170px}
 @media(max-width:1300px){.image-grid{grid-template-columns:repeat(3,minmax(0,1fr));}.stat-grid{grid-template-columns:repeat(3,minmax(140px,1fr));}}
 @media(max-width:900px){.admin-shell{grid-template-columns:1fr}.two-col{grid-template-columns:1fr}.image-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.stat-grid{grid-template-columns:repeat(2,minmax(140px,1fr));}}
 </style>
 <div class="admin-shell">
   <aside class="admin-side">
     <h2>لوحة الإدارة</h2>
-    <a class="<?= $route==='admin'?'active':'' ?>" href="/admin">📊 الإحصائيات</a>
-    <a class="<?= $route==='admin_files'?'active':'' ?>" href="/admin/files">📁 إدارة الملفات</a>
-    <a class="<?= $route==='admin_images'?'active':'' ?>" href="/admin/images">🖼 مراجعة الصور</a>
-    <a class="<?= $route==='admin_settings'?'active':'' ?>" href="/admin/settings">⚙ الإعدادات</a>
-    <a href="/drive">↩ العودة للدرايف</a>
-    <a href="/logout">🚪 خروج</a>
+    <a class="<?= $route==='admin'?'active':'' ?>" href="/admin"><i class="fas fa-chart-line"></i> الإحصائيات</a>
+    <a class="<?= $route==='admin_files'?'active':'' ?>" href="/admin/files"><i class="fas fa-file-archive"></i> إدارة الملفات</a>
+    <a class="<?= $route==='admin_images'?'active':'' ?>" href="/admin/images"><i class="fas fa-images"></i> إدارة الصور</a>
+    <a class="<?= $route==='admin_settings'?'active':'' ?>" href="/admin/settings"><i class="fas fa-cog"></i> الإعدادات</a>
+    <a href="/drive"><i class="fas fa-arrow-right"></i> العودة للدرايف</a>
+    <a href="/logout"><i class="fas fa-sign-out-alt"></i> خروج</a>
   </aside>
   <main class="admin-main">
     <?php if ($flash): ?><div class="flash <?= $flash['type'] ?>" style="margin-bottom:10px"><?= htmlspecialchars($flash['msg']) ?></div><?php endif; ?>
@@ -924,65 +943,53 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
     <?php endif; ?>
 
     <?php if ($route === "admin_files"): ?>
-    <section class="panel" id="files" style="overflow:auto">
-      <h3>أحدث الملفات / إجراءات جماعية</h3>
-      <form method="post" id="adminBulkForm">
-        <input type="hidden" name="action" value="admin_bulk_files"><input type="hidden" name="redirect" value="/admin">
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-          <select name="bulk_op" id="bulkOp" required>
-            <option value="">اختر العملية</option>
-            <option value="trash">نقل إلى المهملات</option>
-            <option value="delete">حذف نهائي</option>
-            <option value="move">نقل إلى مجلد</option>
-            <option value="unshare">إلغاء المشاركة</option>
-          </select>
-          <select name="target_folder_id" id="targetFolderSelect">
-            <option value="">الجذر</option>
-            <?php foreach($adminFolders as $fd): ?>
-            <option value="<?= (int)$fd['id'] ?>">#<?= (int)$fd['id'] ?> - <?= htmlspecialchars($fd['name']) ?> (<?= htmlspecialchars($fd['user_id']) ?>)</option>
-            <?php endforeach; ?>
-          </select>
-          <button type="submit">تنفيذ</button>
-          <button type="button" onclick="document.querySelectorAll('.admin-file-check').forEach(c=>c.checked=true)">تحديد الكل</button>
-          <button type="button" onclick="document.querySelectorAll('.admin-file-check').forEach(c=>c.checked=false)">إلغاء التحديد</button>
-        </div>
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead><tr style="background:#f3f4f6"><th></th><th>المعرف</th><th>اسم الملف</th><th>الرافع</th><th>الدولة</th><th>الحجم</th><th>المشاركة</th><th>تاريخ الرفع</th></tr></thead>
-          <tbody>
+    <section class="panel" id="files">
+      <h3><i class="fas fa-file-archive"></i> إدارة الملفات (غير الصور)</h3>
+      <div class="admin-hint">يمكنك التحديد بالمؤشر، أو Ctrl/Cmd + نقرة، أو النقر بالزر الأيمن لإظهار الخيارات.</div>
+      <div id="adminSelectionMeta" class="admin-selection-meta hidden"></div>
+      <div id="adminSelectionSurface" class="admin-selection-surface">
+        <div id="adminDragSelectionBox" class="admin-drag-selection-box hidden" aria-hidden="true"></div>
+        <div id="adminFilesGrid" class="admin-files-grid">
           <?php foreach($adminFiles as $af): ?>
-            <tr>
-              <td><input class="admin-file-check" type="checkbox" name="file_ids[]" value="<?= (int)$af['id'] ?>"></td>
-              <td><?= (int)$af['id'] ?></td>
-              <td><?= htmlspecialchars($af['filename']) ?></td>
-              <td><?= htmlspecialchars($af['user_name'] ?: $af['user_id']) ?></td>
-              <td><?= htmlspecialchars((string)($af['uploader_country'] ?: 'ZZ')) ?></td>
-              <td><?= format_bytes((int)$af['size_bytes']) ?></td>
-              <td><?= $af['shared_token'] ? '✅' : '—' ?></td>
-              <td><?= htmlspecialchars((string)$af['created_at']) ?></td>
-            </tr>
+          <article class="admin-file-card" data-type="file" data-id="<?= (int)$af['id'] ?>" data-name="<?= htmlspecialchars($af['filename']) ?>" data-shared="<?= $af['shared_token'] ? '1':'0' ?>">
+            <div class="admin-card-icon"><i class="fas fa-file-archive"></i></div>
+            <strong title="<?= htmlspecialchars($af['filename']) ?>"><?= htmlspecialchars($af['filename']) ?></strong>
+            <small><i class="fas fa-hdd"></i> <?= format_bytes((int)$af['size_bytes']) ?> • #<?= (int)$af['id'] ?></small>
+            <small><i class="fas fa-user"></i> <?= htmlspecialchars($af['user_name'] ?: $af['user_id']) ?></small>
+          </article>
           <?php endforeach; ?>
-          </tbody>
-        </table>
-      </form>
+        </div>
+      </div>
     </section>
     <?php endif; ?>
 
     <?php if ($route === "admin_images"): ?>
     <section class="panel" id="images">
-      <h3>مراجعة الصور (5 بكل صف)</h3>
-      <div class="image-grid">
-        <?php foreach($adminImageFiles as $img): ?>
-          <div class="image-card">
-            <a href="<?= htmlspecialchars(file_url($img)) ?>" target="_blank"><img src="/<?= htmlspecialchars($img['relative_path']) ?>" alt="<?= htmlspecialchars($img['filename']) ?>"></a>
-            <div class="image-meta">
-              <div><strong><?= htmlspecialchars($img['filename']) ?></strong></div>
-              <div><?= htmlspecialchars($img['user_name'] ?: $img['user_id']) ?> · <?= format_bytes((int)$img['size_bytes']) ?></div>
-            </div>
-          </div>
-        <?php endforeach; ?>
+      <h3><i class="fas fa-image"></i> إدارة الصور</h3>
+      <div class="admin-hint">عرض شبكي كامل مع تحديد سريع ونقر أيمن لخيارات الإدارة.</div>
+      <div id="adminSelectionMeta" class="admin-selection-meta hidden"></div>
+      <div id="adminSelectionSurface" class="admin-selection-surface">
+        <div id="adminDragSelectionBox" class="admin-drag-selection-box hidden" aria-hidden="true"></div>
+        <div class="image-grid admin-image-grid">
+          <?php foreach($adminImageFiles as $img): ?>
+            <article class="image-card admin-file-card" data-type="file" data-id="<?= (int)$img['id'] ?>" data-name="<?= htmlspecialchars($img['filename']) ?>" data-shared="<?= $img['shared_token'] ? '1':'0' ?>">
+              <img src="/<?= htmlspecialchars($img['relative_path']) ?>" alt="<?= htmlspecialchars($img['filename']) ?>">
+              <div class="image-meta">
+                <div><strong><?= htmlspecialchars($img['filename']) ?></strong></div>
+                <div><?= htmlspecialchars($img['user_name'] ?: $img['user_id']) ?> · <?= format_bytes((int)$img['size_bytes']) ?></div>
+              </div>
+            </article>
+          <?php endforeach; ?>
+        </div>
       </div>
     </section>
     <?php endif; ?>
+  <div id="adminCtxMenu" class="admin-ctx-menu hidden">
+    <button type="button" data-admin-cmd="trash"><i class="fas fa-trash"></i><span>نقل إلى المهملات</span></button>
+    <button type="button" data-admin-cmd="delete"><i class="fas fa-trash-alt"></i><span>حذف نهائي</span></button>
+    <button type="button" data-admin-cmd="move"><i class="fas fa-folder-open"></i><span>نقل إلى مجلد...</span></button>
+    <button type="button" data-admin-cmd="unshare"><i class="fas fa-link-slash"></i><span>إلغاء المشاركة</span></button>
+  </div>
   </main>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -999,6 +1006,127 @@ if(bulkOp&&folderSel){
   const sync=()=>{folderSel.style.display=(bulkOp.value==='move')?'inline-block':'none';};
   bulkOp.addEventListener('change',sync);sync();
 }
+
+const adminCtxMenu=document.getElementById('adminCtxMenu');
+if(adminCtxMenu){ document.addEventListener('contextmenu',(e)=>e.preventDefault()); }
+const adminSelectionSurface=document.getElementById('adminSelectionSurface');
+const adminDragSelectionBox=document.getElementById('adminDragSelectionBox');
+const adminSelectionMeta=document.getElementById('adminSelectionMeta');
+const adminCards=[...document.querySelectorAll('#adminSelectionSurface .admin-file-card[data-id]')];
+let adminSelected=[];
+let adminDragState=null;
+let adminSuppressClear=false;
+
+function setAdminSelected(items){
+  adminCards.forEach(c=>c.classList.remove('is-selected'));
+  adminSelected=[...new Set(items)].filter(Boolean);
+  adminSelected.forEach(c=>c.classList.add('is-selected'));
+  if(!adminSelectionMeta) return;
+  if(!adminSelected.length){ adminSelectionMeta.classList.add('hidden'); adminSelectionMeta.textContent=''; return; }
+  adminSelectionMeta.classList.remove('hidden');
+  adminSelectionMeta.textContent=`تم تحديد ${adminSelected.length} عنصر`;
+}
+
+function openAdminMenu(e, card){
+  e.preventDefault();
+  if(!adminSelected.includes(card)) setAdminSelected([card]);
+  if(!adminCtxMenu) return;
+  const w=240,h=210,p=8;
+  adminCtxMenu.style.left=Math.min(e.clientX, window.innerWidth-w-p)+'px';
+  adminCtxMenu.style.top=Math.min(e.clientY, window.innerHeight-h-p)+'px';
+  adminCtxMenu.classList.remove('hidden');
+}
+
+async function adminBulkAction(op, ids, targetFolder=''){
+  const fd=new FormData();
+  fd.append('action','admin_bulk_files');
+  fd.append('bulk_op', op);
+  fd.append('target_folder_id', targetFolder);
+  fd.append('redirect', window.location.pathname);
+  ids.forEach(id=>fd.append('file_ids[]', String(id)));
+  const r=await fetch(window.location.pathname,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd});
+  const j=await r.json();
+  if(!r.ok || !j.ok) throw new Error(j.message||'فشلت العملية');
+  return j;
+}
+
+adminCards.forEach(card=>{
+  card.addEventListener('click',(e)=>{
+    if(e.metaKey||e.ctrlKey){
+      const next=adminSelected.includes(card)?adminSelected.filter(x=>x!==card):[...adminSelected, card];
+      setAdminSelected(next);
+    }else{
+      setAdminSelected([card]);
+    }
+  });
+  card.addEventListener('contextmenu',(e)=>openAdminMenu(e,card));
+});
+
+function rectFrom(a,b){return {left:Math.min(a.x,b.x),top:Math.min(a.y,b.y),width:Math.abs(a.x-b.x),height:Math.abs(a.y-b.y)}}
+function hit(r1,r2){return !(r2.left>r1.left+r1.width || r2.left+r2.width<r1.left || r2.top>r1.top+r1.height || r2.top+r2.height<r1.top)}
+adminSelectionSurface?.addEventListener('mousedown',(e)=>{
+  if(e.button!==0) return;
+  if(e.target.closest('.admin-file-card,.admin-ctx-menu,button,input,select,textarea,a,form')) return;
+  const sr=adminSelectionSurface.getBoundingClientRect();
+  adminDragState={start:{x:e.clientX,y:e.clientY},sr,dragged:false};
+  adminDragSelectionBox?.classList.remove('hidden');
+  if(adminDragSelectionBox){
+    adminDragSelectionBox.style.left=(e.clientX-sr.left+adminSelectionSurface.scrollLeft)+'px';
+    adminDragSelectionBox.style.top=(e.clientY-sr.top+adminSelectionSurface.scrollTop)+'px';
+    adminDragSelectionBox.style.width='0px';
+    adminDragSelectionBox.style.height='0px';
+  }
+  setAdminSelected([]);
+  e.preventDefault();
+});
+
+document.addEventListener('mousemove',(e)=>{
+  if(!adminDragState || !adminSelectionSurface || !adminDragSelectionBox) return;
+  const r=rectFrom(adminDragState.start,{x:e.clientX,y:e.clientY});
+  if(r.width>3||r.height>3) adminDragState.dragged=true;
+  adminDragSelectionBox.style.left=(r.left-adminDragState.sr.left+adminSelectionSurface.scrollLeft)+'px';
+  adminDragSelectionBox.style.top=(r.top-adminDragState.sr.top+adminSelectionSurface.scrollTop)+'px';
+  adminDragSelectionBox.style.width=r.width+'px';
+  adminDragSelectionBox.style.height=r.height+'px';
+  const touched=[];
+  adminCards.forEach(c=>{const rc=c.getBoundingClientRect(); if(hit(r,{left:rc.left,top:rc.top,width:rc.width,height:rc.height})) touched.push(c);});
+  setAdminSelected(touched);
+});
+
+document.addEventListener('mouseup',()=>{
+  if(!adminDragState || !adminDragSelectionBox) return;
+  adminDragSelectionBox.classList.add('hidden');
+  adminSuppressClear=!!adminDragState.dragged;
+  adminDragState=null;
+});
+
+adminCtxMenu?.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',async()=>{
+  const cmd=btn.dataset.adminCmd;
+  if(!adminSelected.length) return;
+  const ids=adminSelected.map(c=>Number(c.dataset.id)).filter(Boolean);
+  let target='';
+  if(cmd==='move'){
+    const answer=prompt('أدخل رقم المجلد الهدف (اتركه فارغاً للنقل إلى الجذر):','');
+    if(answer===null) return;
+    target=answer;
+  }
+  try{
+    await adminBulkAction(cmd, ids, target.trim());
+    if(cmd==='trash' || cmd==='delete' || cmd==='move') adminSelected.forEach(c=>c.remove());
+    if(cmd==='unshare') adminSelected.forEach(c=>c.dataset.shared='0');
+    setAdminSelected(adminSelected.filter(c=>document.body.contains(c)));
+  }catch(err){
+    alert(err.message||'فشلت العملية');
+  }finally{
+    adminCtxMenu.classList.add('hidden');
+  }
+}));
+
+document.addEventListener('click',(e)=>{
+  if(adminSuppressClear){adminSuppressClear=false;return;}
+  if(!e.target.closest('.admin-file-card,.admin-ctx-menu')) setAdminSelected([]);
+  if(!e.target.closest('.admin-ctx-menu')) adminCtxMenu?.classList.add('hidden');
+});
 
 if (window.Chart) {
   const ctx = document.getElementById('uploadsByMonthChart');
