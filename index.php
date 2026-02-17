@@ -994,7 +994,6 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
     <div class="section-head"><h2>الملفات والمجلدات المشتركة</h2></div>
     <?php if ($sharedFolders): ?>
     <div class="folders-grid">
-      <div class="folder-card" onclick="location.href='/home'" style="cursor:pointer"><div class="folder-placeholder"><i class="fas fa-layer-group"></i></div><strong>كل المجلدات</strong></div>
       <?php foreach ($sharedFolders as $sf): ?>
       <div class="folder-card" onclick="location.href='/home?sfolder=<?= (int)$sf['folder_id'] ?>'" style="cursor:pointer">
         <div class="folder-placeholder"><i class="fas fa-folder"></i></div>
@@ -1007,29 +1006,19 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
       <?php if (!$sharedFiles): ?><div class="empty">لا توجد ملفات مشتركة حالياً.</div><?php endif; ?>
       <?php foreach ($sharedFiles as $f): ?>
       <?php $surl = share_url((string)$f['shared_token'], (string)$f['filename']); ?>
-      <div class="file-grid-card folder-card">
+      <div class="file-grid-card folder-card home-shared-card" data-share-url="<?= htmlspecialchars($surl) ?>" data-download-url="<?= htmlspecialchars($surl) ?>?download=1" data-name="<?= htmlspecialchars((string)$f['filename']) ?>">
         <div class="file-grid-thumb-link">
           <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars($surl) ?>" alt="thumb" />
           <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
         </div>
         <strong><?= htmlspecialchars($f['filename']) ?></strong>
-        <small><?= format_bytes((int)$f['size_bytes']) ?> • <?= htmlspecialchars((string)$f['user_name']) ?></small>
-        <div class="selection-actions" style="margin-top:6px">
-          <button type="button" class="copy-share-btn" data-share-url="<?= htmlspecialchars($surl) ?>"><i class="fas fa-link"></i><span>نسخ الرابط</span></button>
-          <a href="<?= htmlspecialchars($surl) ?>?download=1" target="_blank" class="new-btn" style="height:34px;display:inline-flex;align-items:center;gap:6px"><i class="fas fa-download"></i><span>تنزيل</span></a>
-        </div>
+        <small>تمت المشاركة بواسطة <?= htmlspecialchars((string)$f['user_name']) ?></small>
       </div>
       <?php endforeach; ?>
     </div>
   </main>
 </div>
 <script>
-document.querySelectorAll('.copy-share-btn').forEach(btn=>btn.addEventListener('click', async ()=>{
-  const full=window.location.origin + (btn.dataset.shareUrl||'');
-  try{ await navigator.clipboard.writeText(full); }catch(e){}
-  const span=btn.querySelector('span');
-  if(span){ span.textContent='تم النسخ'; setTimeout(()=>span.textContent='نسخ الرابط', 1200); }
-}));
 </script>
 <?php elseif ($route === 'login'): ?>
 <main class="login-wrap">
@@ -1459,7 +1448,6 @@ function drawRegionsMap() {
     <?php if ($route === 'home'): ?>
     <?php if ($sharedFolders): ?>
     <div class="folders-grid">
-      <div class="folder-card" onclick="location.href='/home'" style="cursor:pointer"><div class="folder-placeholder"><i class="fas fa-layer-group"></i></div><strong>كل المجلدات</strong></div>
       <?php foreach ($sharedFolders as $sf): ?>
       <div class="folder-card" onclick="location.href='/home?sfolder=<?= (int)$sf['folder_id'] ?>'" style="cursor:pointer">
         <div class="folder-placeholder"><i class="fas fa-folder"></i></div>
@@ -1473,17 +1461,13 @@ function drawRegionsMap() {
       <?php if (!$sharedFiles): ?><div class="empty">لا توجد ملفات مشتركة حالياً.</div><?php endif; ?>
       <?php foreach ($sharedFiles as $f): ?>
       <?php $surl = share_url((string)$f['shared_token'], (string)$f['filename']); ?>
-      <div class="file-grid-card folder-card">
+      <div class="file-grid-card folder-card home-shared-card" data-share-url="<?= htmlspecialchars($surl) ?>" data-download-url="<?= htmlspecialchars($surl) ?>?download=1" data-name="<?= htmlspecialchars((string)$f['filename']) ?>">
         <div class="file-grid-thumb-link">
           <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars($surl) ?>" alt="thumb" />
           <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
         </div>
         <strong><?= htmlspecialchars($f['filename']) ?></strong>
-        <small><?= format_bytes((int)$f['size_bytes']) ?> • <?= htmlspecialchars((string)$f['user_name']) ?></small>
-        <div class="selection-actions" style="margin-top:6px">
-          <button type="button" class="copy-share-btn" data-share-url="<?= htmlspecialchars($surl) ?>"><i class="fas fa-link"></i><span>نسخ الرابط</span></button>
-          <a href="<?= htmlspecialchars($surl) ?>?download=1" target="_blank" class="new-btn" style="height:34px;display:inline-flex;align-items:center;gap:6px"><i class="fas fa-download"></i><span>تنزيل</span></a>
-        </div>
+        <small>تمت المشاركة بواسطة <?= htmlspecialchars((string)$f['user_name']) ?></small>
       </div>
       <?php endforeach; ?>
     </div>
@@ -1595,6 +1579,12 @@ function drawRegionsMap() {
   <button data-cmd="delete"><i class="far fa-trash-alt" aria-hidden="true"></i><span>نقل إلى سلة المهملات</span></button>
 </div>
 
+<div id="homeCtxMenu" class="ctx-menu hidden modern-left-menu">
+  <button data-home-cmd="copy"><i class="fas fa-link" aria-hidden="true"></i><span>نسخ الرابط</span></button>
+  <button data-home-cmd="download"><i class="fas fa-download" aria-hidden="true"></i><span>تنزيل</span></button>
+</div>
+
+
 <form id="cmdForm" method="post" class="hidden">
   <input type="hidden" name="action" id="cmdAction"><input type="hidden" name="id" id="cmdId"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/files') ?>"><input type="hidden" name="new_name" id="cmdName">
 </form>
@@ -1626,7 +1616,7 @@ if(newBtn && newMenu){
 }
 document.querySelectorAll('[data-close]').forEach(el=>el.addEventListener('click',()=>el.closest('.modal').classList.add('hidden')));
 window.addEventListener('click',(e)=>{if(e.target.classList.contains('modal')) e.target.classList.add('hidden');});
-window.addEventListener('keydown',(e)=>{if(e.key==='Escape'){document.querySelectorAll('.modal').forEach(m=>m.classList.add('hidden'));if(newMenu)newMenu.classList.add('hidden');ctxMenu.classList.add('hidden');}});
+window.addEventListener('keydown',(e)=>{if(e.key==='Escape'){document.querySelectorAll('.modal').forEach(m=>m.classList.add('hidden'));if(newMenu)newMenu.classList.add('hidden');ctxMenu.classList.add('hidden'); if(homeCtxMenu) homeCtxMenu.classList.add('hidden');}});
 
 // منع قائمة المتصفح الافتراضية للنقر بالزر الأيمن لإظهار تجربة قائمة موحّدة داخل التطبيق
 document.addEventListener('contextmenu',(e)=>{
@@ -1847,6 +1837,8 @@ window.addEventListener('drop',(e)=>{
 });
 
 const ctxMenu=document.getElementById('ctxMenu');
+const homeCtxMenu=document.getElementById('homeCtxMenu');
+let homeCtxTarget=null;
 const selectionBar=document.getElementById('selectionBar');
 const selectionCount=document.getElementById('selectionCount');
 const shareModal=document.getElementById('shareModal');
@@ -2213,6 +2205,7 @@ document.addEventListener('click',(e)=>{
     setSelected([]);
   }
   if(!e.target.closest('#ctxMenu')) ctxMenu.classList.add('hidden');
+  if(!e.target.closest('#homeCtxMenu')) homeCtxMenu?.classList.add('hidden');
 });
 
 document.querySelectorAll('[data-select-cmd]').forEach(btn=>btn.addEventListener('click',async ()=>{
@@ -2354,12 +2347,6 @@ shareHomeToggle?.addEventListener('change', async ()=>{
   }
 });
 
-document.querySelectorAll('.copy-share-btn').forEach(btn=>btn.addEventListener('click', async ()=>{
-  const full=window.location.origin + (btn.dataset.shareUrl||'');
-  try{ await navigator.clipboard.writeText(full); }catch(e){}
-  const span=btn.querySelector('span');
-  if(span){ span.textContent='تم النسخ'; setTimeout(()=>span.textContent='نسخ الرابط', 1200); }
-}));
 
 shareCopyBtn?.addEventListener('click', async ()=>{
   const primary=getPrimary();
@@ -2374,9 +2361,35 @@ shareCopyBtn?.addEventListener('click', async ()=>{
   updateSelectionMeta();
 });
 
+document.querySelectorAll('.home-shared-card').forEach(card=>{
+  card.addEventListener('contextmenu',(e)=>{
+    if(!homeCtxMenu) return;
+    e.preventDefault();
+    homeCtxTarget=card;
+    const pad=8, menuW=240, menuH=110;
+    homeCtxMenu.style.left=Math.min(e.clientX, window.innerWidth-menuW-pad)+'px';
+    homeCtxMenu.style.top=Math.min(e.clientY, window.innerHeight-menuH-pad)+'px';
+    homeCtxMenu.classList.remove('hidden');
+  });
+});
+
+homeCtxMenu?.querySelectorAll('button').forEach(btn=>btn.addEventListener('click', async ()=>{
+  if(!homeCtxTarget) return;
+  const cmd=btn.dataset.homeCmd;
+  const shareUrl=homeCtxTarget.dataset.shareUrl||'';
+  const downloadUrl=homeCtxTarget.dataset.downloadUrl||'';
+  if(cmd==='copy' && shareUrl){
+    try{ await navigator.clipboard.writeText(window.location.origin+shareUrl); showToast('تم نسخ الرابط','success'); }catch(e){ showToast('تعذر نسخ الرابط','warn'); }
+  }
+  if(cmd==='download' && downloadUrl){
+    window.open(downloadUrl,'_blank');
+  }
+  homeCtxMenu.classList.add('hidden');
+}));
+
 ctxMenu?.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',(e)=>{
   e.stopPropagation();
-  ctxMenu.classList.add('hidden');
+  ctxMenu.classList.add('hidden'); if(homeCtxMenu) homeCtxMenu.classList.add('hidden');
   const primary=getPrimary();
   if(!primary) return;
   submitCmd(btn.dataset.cmd, primary).catch(e=>showToast(e.message,'warn'));
