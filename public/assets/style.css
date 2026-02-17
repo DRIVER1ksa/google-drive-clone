@@ -118,6 +118,14 @@ select{border-radius:10px;border:1px solid #d3d8e3;background:#fff;padding:0 10p
 .ShareDialog-social{display:flex;flex-direction:column;align-items:center;gap:8px;color:#374151}.ShareDialog-socialIcon{width:62px;height:62px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:30px}.ShareDialog-socialLabel{font-size:16px;color:#374151}.ShareDialog-social:hover{transform:translateY(-1px)}
 
 .ShareDialog-copyBtn i{margin-inline-start:6px}
+.ShareDialog-homeToggle{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:14px 0 8px}
+.ShareDialog-homeToggle label{font-size:18px;font-weight:600;color:#334155}
+.ShareDialog-switch{appearance:none;-webkit-appearance:none;position:relative;inline-size:140px;block-size:74px;border-radius:999px;background:#d1d5db;border:2px solid #9ca3af;cursor:pointer;transition:background-color .22s,border-color .22s;box-shadow:inset 0 0 0 1px #ffffff66}
+.ShareDialog-switch::before{content:"";position:absolute;top:2px;left:2px;inline-size:66px;block-size:66px;border-radius:50%;background:#ececec;border:2px solid #8a8a8a;box-shadow:0 2px 4px #0000004d;transition:left .22s,right .22s}
+.ShareDialog-switch::after{content:"OFF";position:absolute;inset:0;display:flex;align-items:center;justify-content:flex-end;padding-inline:22px;font-size:54px;font-weight:800;letter-spacing:1px;color:#ffffff;text-shadow:0 1px 2px #00000066}
+.ShareDialog-switch:checked{background:#0a7be8;border-color:#0666bf}
+.ShareDialog-switch:checked::before{left:auto;right:2px}
+.ShareDialog-switch:checked::after{content:"ON";justify-content:flex-start;padding-inline:20px}
 
 .ShareDialog-facebook .ShareDialog-socialIcon{background:#1877f2}
 .ShareDialog-x .ShareDialog-socialIcon{background:#374151}

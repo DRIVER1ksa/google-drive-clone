@@ -1563,7 +1563,7 @@ function drawRegionsMap() {
   <div class="ShareDialog-copyrightMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف لأنه محمي بحقوق النشر.</div>
   <div class="ShareDialog-dmcaMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف بسبب مطالبة DMCA.</div>
   <div class="ShareDialog-virusMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف لأنه يحتوي على فيروس.</div>
-  <div class="ShareDialog-homeToggle"><label><span>إظهار في الصفحة الرئيسية للمنتدى</span><input id="shareHomeToggle" type="checkbox" role="switch"></label></div>
+  <div class="ShareDialog-homeToggle"><label for="shareHomeToggle">إظهار في الصفحة الرئيسية للمنتدى</label><input id="shareHomeToggle" class="ShareDialog-switch" type="checkbox" role="switch" aria-label="إظهار في الصفحة الرئيسية للمنتدى"></div>
   <div class="ShareDialog-links">
     <div class="ShareDialog-inputGroup" role="group" aria-labelledby="share-link-label">
       <label for="share-link-input" id="share-link-label" class="hidden">رابط المشاركة</label>
