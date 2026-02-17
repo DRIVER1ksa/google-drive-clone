@@ -28,6 +28,7 @@ function ensure_schema(PDO $pdo): void {
         name VARCHAR(255) NOT NULL,
         parent_id BIGINT UNSIGNED NULL,
         shared_token VARCHAR(64) NULL,
+        home_shared TINYINT(1) NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY uq_folder_token (shared_token),
         INDEX idx_user_parent (user_id, parent_id)
@@ -47,6 +48,7 @@ function ensure_schema(PDO $pdo): void {
       is_starred TINYINT(1) NOT NULL DEFAULT 0,
       is_trashed TINYINT(1) NOT NULL DEFAULT 0,
       download_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      home_shared TINYINT(1) NOT NULL DEFAULT 0,
       uploader_ip VARCHAR(64) NULL,
       uploader_country CHAR(2) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -62,6 +64,7 @@ function ensure_schema(PDO $pdo): void {
     if (!in_array('download_count', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN download_count BIGINT UNSIGNED NOT NULL DEFAULT 0");
     if (!in_array('uploader_ip', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN uploader_ip VARCHAR(64) NULL");
     if (!in_array('uploader_country', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN uploader_country CHAR(2) NULL");
+    if (!in_array('home_shared', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN home_shared TINYINT(1) NOT NULL DEFAULT 0");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS app_settings (
       `key` VARCHAR(100) PRIMARY KEY,
@@ -71,6 +74,7 @@ function ensure_schema(PDO $pdo): void {
 
     $fcols = $pdo->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='folders'")->fetchAll(PDO::FETCH_COLUMN);
     if (!in_array('shared_token', $fcols, true)) $pdo->exec("ALTER TABLE folders ADD COLUMN shared_token VARCHAR(64) NULL, ADD UNIQUE KEY uq_folder_token (shared_token)");
+    if (!in_array('home_shared', $fcols, true)) $pdo->exec("ALTER TABLE folders ADD COLUMN home_shared TINYINT(1) NOT NULL DEFAULT 0");
 }
 
 function xf_auth(array $config, string $login, string $password): ?array {
@@ -541,6 +545,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
 
+        if ($action === 'toggle_home_share_file') {
+            $id = (int)($_POST['id'] ?? 0);
+            $enabled = (int)($_POST['enabled'] ?? 0) === 1 ? 1 : 0;
+            $q = $pdo->prepare('SELECT shared_token FROM files WHERE id=? AND user_id=? LIMIT 1');
+            $q->execute([$id, $user['id']]);
+            $row = $q->fetch();
+            if (!$row) throw new RuntimeException('الملف غير موجود.');
+            $token = $row['shared_token'];
+            if ($enabled && empty($token)) $token = generate_share_token($pdo);
+            $st = $pdo->prepare('UPDATE files SET home_shared=?, shared_token=? WHERE id=? AND user_id=?');
+            $st->execute([$enabled, $token, $id, $user['id']]);
+        }
+
+        if ($action === 'toggle_home_share_folder') {
+            $id = (int)($_POST['id'] ?? 0);
+            $enabled = (int)($_POST['enabled'] ?? 0) === 1 ? 1 : 0;
+            $st = $pdo->prepare('UPDATE folders SET home_shared=? WHERE id=? AND user_id=?');
+            $st->execute([$enabled, $id, $user['id']]);
+            if ($enabled) {
+                $q = $pdo->prepare('SELECT id, shared_token FROM files WHERE user_id=? AND folder_id=? AND is_trashed=0');
+                $q->execute([$user['id'], $id]);
+                $up = $pdo->prepare('UPDATE files SET shared_token=? WHERE id=? AND user_id=?');
+                foreach ($q->fetchAll() as $f) {
+                    if (!empty($f['shared_token'])) continue;
+                    $up->execute([generate_share_token($pdo), (int)$f['id'], $user['id']]);
+                }
+            }
+        }
+
+
+
         if ($action === 'upload_chunk') {
             $uploadId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($_POST['upload_id'] ?? ''));
             $chunkIndex = (int)($_POST['chunk_index'] ?? -1);
@@ -786,10 +821,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $payload = ['ok' => true, 'message' => 'تم التنفيذ بنجاح'];
             if ($action === 'toggle_share_file') {
                 $fid = (int)($_POST['id'] ?? 0);
-                $qf = $pdo->prepare('SELECT filename,shared_token FROM files WHERE id=? AND user_id=? LIMIT 1');
+                $qf = $pdo->prepare('SELECT filename,shared_token,home_shared FROM files WHERE id=? AND user_id=? LIMIT 1');
                 $qf->execute([$fid, $user['id']]);
                 $rf = $qf->fetch();
                 $payload['share_url'] = (!empty($rf['shared_token']) && !empty($rf['filename'])) ? share_url((string)$rf['shared_token'], (string)$rf['filename']) : null;
+                $payload['home_shared'] = !empty($rf['home_shared']) ? 1 : 0;
+            }
+            if ($action === 'toggle_home_share_file') {
+                $fid = (int)($_POST['id'] ?? 0);
+                $qf = $pdo->prepare('SELECT filename,shared_token,home_shared FROM files WHERE id=? AND user_id=? LIMIT 1');
+                $qf->execute([$fid, $user['id']]);
+                $rf = $qf->fetch();
+                $payload['home_shared'] = !empty($rf['home_shared']) ? 1 : 0;
+                $payload['share_url'] = (!empty($rf['shared_token']) && !empty($rf['filename'])) ? share_url((string)$rf['shared_token'], (string)$rf['filename']) : null;
+            }
+            if ($action === 'toggle_home_share_folder') {
+                $id = (int)($_POST['id'] ?? 0);
+                $qf = $pdo->prepare('SELECT home_shared FROM folders WHERE id=? AND user_id=? LIMIT 1');
+                $qf->execute([$id, $user['id']]);
+                $rf = $qf->fetch();
+                $payload['home_shared'] = !empty($rf['home_shared']) ? 1 : 0;
             }
             header('Content-Type: application/json; charset=utf-8');
             echo json_encode($payload);
@@ -856,13 +907,13 @@ if ($user && str_starts_with($route, 'admin') && $pdo) {
 }
 
 if ($route === 'home' && $pdo) {
-    $sharedFolders = $pdo->query("SELECT f.folder_id, COALESCE(fd.name,'مجلد') AS folder_name, COUNT(*) AS files_count FROM files f LEFT JOIN folders fd ON fd.id=f.folder_id WHERE f.shared_token IS NOT NULL AND f.is_trashed=0 AND f.folder_id IS NOT NULL GROUP BY f.folder_id, fd.name ORDER BY folder_name ASC")->fetchAll();
+    $sharedFolders = $pdo->query("SELECT id AS folder_id, name AS folder_name FROM folders WHERE home_shared=1 ORDER BY name ASC")->fetchAll();
 
     if ($sharedFolderFilter > 0) {
-        $stShared = $pdo->prepare('SELECT id,filename,mime_type,size_bytes,created_at,shared_token,folder_id,user_name FROM files WHERE shared_token IS NOT NULL AND is_trashed=0 AND folder_id=? ORDER BY created_at DESC LIMIT 600');
+        $stShared = $pdo->prepare('SELECT f.id,f.filename,f.mime_type,f.size_bytes,f.created_at,f.shared_token,f.folder_id,f.user_name FROM files f LEFT JOIN folders d ON d.id=f.folder_id WHERE f.is_trashed=0 AND f.shared_token IS NOT NULL AND f.folder_id=? AND (f.home_shared=1 OR COALESCE(d.home_shared,0)=1) ORDER BY f.created_at DESC LIMIT 600');
         $stShared->execute([$sharedFolderFilter]);
     } else {
-        $stShared = $pdo->query('SELECT id,filename,mime_type,size_bytes,created_at,shared_token,folder_id,user_name FROM files WHERE shared_token IS NOT NULL AND is_trashed=0 ORDER BY created_at DESC LIMIT 600');
+        $stShared = $pdo->query('SELECT f.id,f.filename,f.mime_type,f.size_bytes,f.created_at,f.shared_token,f.folder_id,f.user_name FROM files f LEFT JOIN folders d ON d.id=f.folder_id WHERE f.is_trashed=0 AND f.shared_token IS NOT NULL AND (f.home_shared=1 OR COALESCE(d.home_shared,0)=1) ORDER BY f.created_at DESC LIMIT 600');
     }
     $sharedFiles = $stShared->fetchAll();
     $pageTitle = 'الرئيسية';
@@ -877,7 +928,7 @@ if ($user && $route !== 'login' && !str_starts_with($route, 'admin') && $pdo) {
 
     if (in_array($route, ['files','folder'], true)) {
         $parent = $route === 'folder' ? $currentFolderId : null;
-        $fdr = $pdo->prepare("SELECT f.*, 
+        $fdr = $pdo->prepare("SELECT f.*, f.home_shared, 
             (SELECT relative_path FROM files x WHERE x.user_id=f.user_id AND x.folder_id=f.id AND x.is_trashed=0 AND x.mime_type LIKE 'image/%' ORDER BY x.created_at DESC LIMIT 1) preview_image,
             (SELECT COUNT(*) FROM files x WHERE x.user_id=f.user_id AND x.folder_id=f.id AND x.is_trashed=0) items_count
             FROM folders f WHERE f.user_id=? AND ((f.parent_id IS NULL AND ? IS NULL) OR f.parent_id=?) ORDER BY f.name");
@@ -1407,7 +1458,7 @@ function drawRegionsMap() {
     <div id="selectionSurface" class="selection-surface">
     <div class="folders-grid">
       <?php foreach ($folders as $fd): ?>
-      <div class="folder-card" data-type="folder" data-id="<?= (int)$fd['id'] ?>" data-name="<?= htmlspecialchars($fd['name']) ?>" data-href="/folders/<?= (int)$fd['id'] ?>">
+      <div class="folder-card" data-type="folder" data-id="<?= (int)$fd['id'] ?>" data-name="<?= htmlspecialchars($fd['name']) ?>" data-home-shared="<?= !empty($fd['home_shared']) ? '1':'0' ?>" data-href="/folders/<?= (int)$fd['id'] ?>">
         <?php if (!empty($fd['preview_image'])): ?><img src="/<?= htmlspecialchars($fd['preview_image']) ?>" alt="preview" />
         <?php else: ?><div class="folder-placeholder">📁</div><?php endif; ?>
         <strong><?= htmlspecialchars($fd['name']) ?></strong>
@@ -1418,7 +1469,7 @@ function drawRegionsMap() {
     <div class="files-grid" id="filesGrid">
       <?php if (!$files): ?><div class="empty">لا توجد ملفات.</div><?php endif; ?>
       <?php foreach ($files as $f): ?>
-      <div class="file-grid-card folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-file-url="<?= htmlspecialchars(file_url($f)) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
+      <div class="file-grid-card folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-file-url="<?= htmlspecialchars(file_url($f)) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-home-shared="<?= !empty($f['home_shared']) ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
         <div class="file-grid-thumb-link">
           <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" />
           <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
@@ -1479,6 +1530,7 @@ function drawRegionsMap() {
   <div class="ShareDialog-copyrightMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف لأنه محمي بحقوق النشر.</div>
   <div class="ShareDialog-dmcaMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف بسبب مطالبة DMCA.</div>
   <div class="ShareDialog-virusMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف لأنه يحتوي على فيروس.</div>
+  <div class="ShareDialog-homeToggle"><label><span>إظهار في الصفحة الرئيسية للمنتدى</span><input id="shareHomeToggle" type="checkbox" role="switch"></label></div>
   <div class="ShareDialog-links">
     <div class="ShareDialog-inputGroup" role="group" aria-labelledby="share-link-label">
       <label for="share-link-input" id="share-link-label" class="hidden">رابط المشاركة</label>
@@ -1761,6 +1813,8 @@ const shareBlogger=document.getElementById('shareBlogger');
 const shareLinkedin=document.getElementById('shareLinkedin');
 const shareWhatsapp=document.getElementById('shareWhatsapp');
 const shareTelegram=document.getElementById('shareTelegram');
+const shareHomeToggle=document.getElementById('shareHomeToggle');
+let shareTargetEl=null;
 const selectionMeta=document.getElementById('selectionMeta');
 const moveModal=document.getElementById('moveModal');
 const moveModalTitle=document.getElementById('moveModalTitle');
@@ -1890,15 +1944,25 @@ async function ensureShareUrl(el){
 }
 
 async function openShareDialog(el){
-  if(!el || el.dataset.type!=='file'){ showToast('المشاركة متاحة للملفات فقط.','warn'); return; }
+  if(!el){ showToast('اختر عنصراً أولاً.','warn'); return; }
+  shareTargetEl=el;
+  const isFile=el.dataset.type==='file';
   shareFileName.textContent=(el.dataset.name||'ملف');
-  const sizeText=el.querySelector('small')?.textContent?.split('•')[0]?.trim()||'-';
+  const sizeText=isFile ? (el.querySelector('small')?.textContent?.split('•')[0]?.trim()||'-') : 'مجلد';
   shareFileSize.textContent=sizeText;
-  const url=await ensureShareUrl(el);
-  if(!url){ showToast('تعذر إنشاء رابط مشاركة.','warn'); return; }
-  const full=window.location.origin+url;
-  shareLinkInput.value=full;
-  buildShareLinks(full, el.dataset.name||'ملف');
+  if(shareHomeToggle) shareHomeToggle.checked = (el.dataset.homeShared==='1');
+
+  const linksWrap=shareModal?.querySelector('.ShareDialog-links');
+  if(linksWrap) linksWrap.classList.toggle('hidden', !isFile);
+
+  if(isFile){
+    const url=await ensureShareUrl(el);
+    if(!url){ showToast('تعذر إنشاء رابط مشاركة.','warn'); return; }
+    const full=window.location.origin+url;
+    shareLinkInput.value=full;
+    buildShareLinks(full, el.dataset.name||'ملف');
+  }
+
   shareModal.classList.remove('hidden');
 }
 
@@ -1949,7 +2013,7 @@ async function submitCmd(cmd, el){
     openMoveModal([el]);
     return;
   }
-  if(cmd==='share' && type==='file'){ openShareDialog(el); return; }
+  if(cmd==='share' && (type==='file' || type==='folder')){ openShareDialog(el); return; }
   if(cmd==='copy' && type==='file'){
     const url=await ensureShareUrl(el);
     if(!url){ showToast('تعذر إنشاء رابط مشاركة.','warn'); return; }
@@ -2220,6 +2284,25 @@ emptyTrashBtn?.addEventListener('click', async ()=>{
   await postAction('empty_trash',{});
   showToast('تم حذف كل ملفات سلة المهملات نهائياً','success');
   setTimeout(()=>location.reload(), 300);
+});
+
+shareHomeToggle?.addEventListener('change', async ()=>{
+  if(!shareTargetEl){ shareHomeToggle.checked=false; return; }
+  const enabled=shareHomeToggle.checked ? 1 : 0;
+  try{
+    if(shareTargetEl.dataset.type==='file'){
+      const res=await postAction('toggle_home_share_file',{id:shareTargetEl.dataset.id, enabled});
+      shareTargetEl.dataset.homeShared = String(res.home_shared||0);
+      if(res.share_url){ shareTargetEl.dataset.shareUrl=res.share_url; shareTargetEl.dataset.shared='1'; }
+    } else {
+      const res=await postAction('toggle_home_share_folder',{id:shareTargetEl.dataset.id, enabled});
+      shareTargetEl.dataset.homeShared = String(res.home_shared||0);
+    }
+    showToast(enabled ? 'تم تفعيل الظهور في الرئيسية' : 'تم إيقاف الظهور في الرئيسية','success');
+  }catch(e){
+    shareHomeToggle.checked=!shareHomeToggle.checked;
+    showToast(e.message,'warn');
+  }
 });
 
 shareCopyBtn?.addEventListener('click', async ()=>{
