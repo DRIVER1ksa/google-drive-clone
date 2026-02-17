@@ -1,4 +1,6 @@
 <?php
+// نتحكم بهيدرات الكاش يدويًا لكل مسار؛ نوقف cache limiter الافتراضي للجلسات لتجنب Expires=1981
+session_cache_limiter('');
 session_start();
 $config = require __DIR__ . '/config.php';
 
