@@ -1222,6 +1222,11 @@ document.querySelectorAll('[data-close]').forEach(el=>el.addEventListener('click
 window.addEventListener('click',(e)=>{if(e.target.classList.contains('modal')) e.target.classList.add('hidden');});
 window.addEventListener('keydown',(e)=>{if(e.key==='Escape'){document.querySelectorAll('.modal').forEach(m=>m.classList.add('hidden'));if(newMenu)newMenu.classList.add('hidden');ctxMenu.classList.add('hidden');}});
 
+// منع قائمة المتصفح الافتراضية للنقر بالزر الأيمن لإظهار تجربة قائمة موحّدة داخل التطبيق
+document.addEventListener('contextmenu',(e)=>{
+  e.preventDefault();
+});
+
 window.addEventListener('keydown',(e)=>{
   const isSelectAll=(e.ctrlKey||e.metaKey) && (e.key==='a' || e.key==='A');
   if(!isSelectAll) return;
@@ -1345,7 +1350,7 @@ function hasRealFiles(dt){
   return !!(dt.files && dt.files.length);
 }
 
-document.querySelectorAll('.file-grid-card, .folder-card img, .file-grid-thumb-link').forEach(el=>{
+document.querySelectorAll('.folder-card img, .file-grid-thumb-link').forEach(el=>{
   el.setAttribute('draggable','false');
   el.addEventListener('dragstart',(e)=>e.preventDefault());
 });
@@ -1404,6 +1409,44 @@ const emptyTrashBtn=document.getElementById('emptyTrashBtn');
 const toastRoot=document.getElementById('toastRoot');
 let currentTarget=null;
 let selectedItems=[];
+let dragMovePayload=null;
+
+function buildMovePayload(items){
+  const unique=[...new Set(items)].filter(Boolean);
+  const files=unique.filter(el=>el.dataset.type==='file');
+  const folders=unique.filter(el=>el.dataset.type==='folder');
+  return {
+    elements: unique,
+    fileIds: files.map(el=>el.dataset.id).filter(Boolean),
+    folderIds: folders.map(el=>el.dataset.id).filter(Boolean),
+  };
+}
+
+function removeMovedItemsFromView(items, targetFolderId){
+  const targetStr=(targetFolderId==null || targetFolderId==='') ? '' : String(targetFolderId);
+  items.forEach(el=>{
+    if(!el || !document.body.contains(el)) return;
+    if(el.dataset.type==='folder' && String(el.dataset.id||'')===targetStr) return;
+    el.remove();
+  });
+  setSelected(selectedItems.filter(el=>document.body.contains(el)));
+}
+
+async function moveElementsToFolder(items, targetFolderId){
+  const payload=buildMovePayload(items);
+  if(!payload.fileIds.length && !payload.folderIds.length){
+    showToast('لا توجد عناصر صالحة للنقل.','warn');
+    return;
+  }
+  const targetStr=(targetFolderId==null || targetFolderId==='') ? '' : String(targetFolderId);
+  if(payload.folderIds.includes(targetStr)){
+    showToast('لا يمكن نقل المجلد إلى نفسه.','warn');
+    return;
+  }
+  await postAction('move_items',{target_folder_id:targetStr,file_ids:payload.fileIds,folder_ids:payload.folderIds});
+  removeMovedItemsFromView(payload.elements, targetStr);
+  showToast('تم نقل العناصر بنجاح','success');
+}
 
 function setSelected(items){
   document.querySelectorAll('.is-selected').forEach(el=>el.classList.remove('is-selected'));
@@ -1555,6 +1598,8 @@ async function submitCmd(cmd, el){
 
 document.querySelectorAll('[data-type]').forEach(el=>{
   el.classList.add('selectable-item');
+  el.setAttribute('draggable','true');
+
   el.addEventListener('click',(e)=>{
     if(e.target.closest('button,form,.star')) return;
     if(e.metaKey || e.ctrlKey){
@@ -1568,6 +1613,56 @@ document.querySelectorAll('[data-type]').forEach(el=>{
       if(href){ window.location.href=href; return; }
     }
   });
+
+  el.addEventListener('dragstart',(e)=>{
+    const sourceItems=selectedItems.includes(el) ? selectedItems : [el];
+    if(!selectedItems.includes(el)) pickOne(el);
+    const payload=buildMovePayload(sourceItems);
+    dragMovePayload=payload;
+    e.dataTransfer.effectAllowed='move';
+    e.dataTransfer.setData('text/plain', JSON.stringify({file_ids:payload.fileIds, folder_ids:payload.folderIds}));
+    el.classList.add('is-dragging');
+  });
+
+  el.addEventListener('dragend',()=>{
+    dragMovePayload=null;
+    document.querySelectorAll('.drop-target-active').forEach(x=>x.classList.remove('drop-target-active'));
+    document.querySelectorAll('.is-dragging').forEach(x=>x.classList.remove('is-dragging'));
+  });
+
+  if(el.dataset.type==='folder'){
+    el.addEventListener('dragover',(e)=>{
+      if(!dragMovePayload) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect='move';
+    });
+
+    el.addEventListener('dragenter',(e)=>{
+      if(!dragMovePayload) return;
+      e.preventDefault();
+      el.classList.add('drop-target-active');
+    });
+
+    el.addEventListener('dragleave',()=>{
+      el.classList.remove('drop-target-active');
+    });
+
+    el.addEventListener('drop', async (e)=>{
+      if(!dragMovePayload) return;
+      e.preventDefault();
+      e.stopPropagation();
+      el.classList.remove('drop-target-active');
+      const targetFolderId=String(el.dataset.id||'');
+      try{
+        await moveElementsToFolder(dragMovePayload.elements, targetFolderId);
+      }catch(err){
+        showToast(err.message||'فشلت عملية النقل.','warn');
+      } finally {
+        dragMovePayload=null;
+      }
+    });
+  }
+
   el.addEventListener('contextmenu',(e)=>openMenu(e, el));
 });
 
@@ -1724,12 +1819,12 @@ moveSearchInput?.addEventListener('input',()=>{
 moveCancelBtn?.addEventListener('click',()=>moveModal.classList.add('hidden'));
 moveConfirmBtn?.addEventListener('click', async ()=>{
   if(!pendingMoveItems.length) return;
-  const fileIds=pendingMoveItems.filter(el=>el.dataset.type==='file').map(el=>el.dataset.id).filter(Boolean);
-  const folderIds=pendingMoveItems.filter(el=>el.dataset.type==='folder').map(el=>el.dataset.id).filter(Boolean);
-  await postAction('move_items',{target_folder_id:moveTargetFolder,file_ids:fileIds,folder_ids:folderIds});
-  showToast('تم نقل العناصر بنجاح','success');
-  moveModal.classList.add('hidden');
-  setTimeout(()=>location.reload(), 300);
+  try{
+    await moveElementsToFolder(pendingMoveItems, moveTargetFolder);
+    moveModal.classList.add('hidden');
+  }catch(err){
+    showToast(err.message||'فشلت عملية النقل.','warn');
+  }
 });
 
 renameCancelBtn?.addEventListener('click',()=>renameModal?.classList.add('hidden'));

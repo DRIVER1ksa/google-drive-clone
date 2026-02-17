@@ -45,6 +45,8 @@ select{border-radius:10px;border:1px solid #d3d8e3;background:#fff;padding:0 10p
 /* selection like Google Drive */
 .selectable-item{cursor:default}
 .selectable-item.is-selected{outline:2px solid var(--gd-blue);background:var(--gd-blue-soft)!important;box-shadow:0 0 0 1px #94b7ff inset}
+.selectable-item.is-dragging{opacity:.55}
+.folder-card.drop-target-active{outline:2px dashed #0b57d0;box-shadow:0 0 0 3px #0b57d033 inset}
 .row.is-selected .name-cell a span{font-weight:700;color:#003a90}
 
 .selection-bar{position:sticky;top:8px;z-index:40;display:flex;align-items:center;justify-content:space-between;background:#111827;color:#f9fafb;border:1px solid #2d3748;border-radius:14px;padding:8px 10px;margin:8px 0 14px;box-shadow:0 10px 24px #00000033}
