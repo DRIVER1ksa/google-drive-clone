@@ -851,13 +851,23 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
 <header class="topbar"> 
   <div class="brand"><img src="/public/game-zone-logo.svg" alt="GAME ZONE"/><span>الرئيسية</span></div>
   <form class="search" method="get" action="/"><input name="q" placeholder="الملفات المشتركة" value=""/></form>
-  <div class="profile"><a class="header-logout" href="/files">ملفاتي</a><a class="header-logout" href="/login">تسجيل الدخول</a></div>
+  <div class="profile">
+    <?php if ($user): ?>
+      <img width="38" height="38" src="<?= htmlspecialchars($user['avatar'] ?: '/public/myimg.png') ?>" alt="avatar"/>
+      <span><?= htmlspecialchars($user['name']) ?></span>
+      <a class="header-logout" href="/files">ملفاتي</a>
+      <a class="header-logout" href="/logout">خروج</a>
+    <?php else: ?>
+      <a class="header-logout" href="/files">ملفاتي</a>
+      <a class="header-logout" href="/login">تسجيل الدخول</a>
+    <?php endif; ?>
+  </div>
 </header>
 <div class="layout">
   <aside class="sidebar modern-sidebar">
     <nav class="sidebar-nav">
       <a href="/" class="active"><i class="fas fa-house"></i><span>الرئيسية</span></a>
-      <a href="/files"><i class="far fa-folder-open"></i><span>ملفاتي</span></a>
+      <?php if ($user): ?><a href="/files"><i class="far fa-folder-open"></i><span>ملفاتي</span></a><?php else: ?><a href="/login"><i class="fas fa-sign-in-alt"></i><span>تسجيل الدخول</span></a><?php endif; ?>
     </nav>
     <div class="storage-card"><p>هذه الصفحة تعرض كل ما قام المستخدمون بمشاركته للعامة.</p></div>
   </aside>
@@ -1280,7 +1290,7 @@ function drawRegionsMap() {
       <button id="newBtn" class="new-btn" type="button"><i class="fas fa-plus"></i> جديد</button>
       <div id="newMenu" class="new-menu hidden">
         <button type="button" data-open="uploadFiles"><i class="far fa-file"></i> تحميل ملف</button>
-        <button type="button" data-open="uploadFolderModal"><i class="far fa-folder"></i> تحميل مجلد</button>
+        <button type="button" data-open="uploadFolders"><i class="far fa-folder"></i> تحميل مجلد</button>
         <button type="button" data-open="folderModal"><i class="fas fa-folder-plus"></i> مجلد جديد</button>
       </div>
     </div>
@@ -1321,6 +1331,7 @@ function drawRegionsMap() {
     <?php if ($flash): ?><div class="flash <?= $flash['type'] ?>"><?= htmlspecialchars($flash['msg']) ?></div><?php endif; ?>
 
     <input id="quickFileInput" type="file" multiple class="hidden" />
+    <input id="quickFolderInput" type="file" webkitdirectory directory multiple class="hidden" />
     <div id="dropUploadOverlay" class="drop-upload-overlay hidden"><div class="drop-upload-box">أفلت الملفات هنا لرفعها مباشرة</div></div>
 
     <div class="section-head"><h2><?= htmlspecialchars($pageTitle) ?></h2><?php if ($route==='trash'): ?><button type="button" id="emptyTrashBtn" class="danger-btn"><i class="fas fa-trash"></i> حذف نهائي لكل الملفات</button><?php endif; ?></div>
@@ -1449,6 +1460,11 @@ if(newBtn && newMenu){
       newMenu.classList.add('hidden');
       return;
     }
+    if(el.dataset.open==='uploadFolders'){
+      quickFolderInput?.click();
+      newMenu.classList.add('hidden');
+      return;
+    }
     const target=document.getElementById(el.dataset.open);
     if(target) target.classList.remove('hidden');
     newMenu.classList.add('hidden');
@@ -1505,6 +1521,7 @@ folderInput?.addEventListener('change', ()=>{
 });
 
 const quickFileInput = document.getElementById('quickFileInput');
+const quickFolderInput = document.getElementById('quickFolderInput');
 const dropUploadOverlay = document.getElementById('dropUploadOverlay');
 const pWrap = document.getElementById('uploadProgress');
 const pBar = document.getElementById('uploadProgressBar');
@@ -1572,10 +1589,67 @@ async function uploadFiles(files){
   }
 }
 
+async function uploadFolderFiles(files){
+  const list=[...files];
+  if(!list.length) return;
+
+  pWrap.classList.remove('hidden');
+  pBar.style.width='0%';
+  pText.textContent='0%';
+  pSpeed.textContent='0 م.ب/ث';
+
+  const fd=new FormData();
+  fd.append('action','upload_folder');
+  fd.append('redirect', window.location.pathname);
+  fd.append('folder_id', activeFolderId==null ? '' : String(activeFolderId));
+  list.forEach(f=>{
+    fd.append('files[]', f);
+    fd.append('relative_paths[]', f.webkitRelativePath || f.name);
+  });
+
+  await new Promise((resolve,reject)=>{
+    const xhr=new XMLHttpRequest();
+    xhr.open('POST', window.location.pathname, true);
+    xhr.setRequestHeader('X-Requested-With','XMLHttpRequest');
+    const started=performance.now();
+
+    xhr.upload.onprogress=(ev)=>{
+      if(!ev.lengthComputable) return;
+      const percent=Math.round((ev.loaded/ev.total)*100);
+      pBar.style.width=percent+'%';
+      pText.textContent=`${list.length} ملف • ${percent}%`;
+      const elapsed=Math.max((performance.now()-started)/1000,0.001);
+      const speedMB=(ev.loaded/elapsed)/(1024*1024);
+      pSpeed.textContent=speedMB.toFixed(2)+' م.ب/ث';
+    };
+
+    xhr.onload=()=>{
+      if(xhr.status>=200 && xhr.status<300) resolve();
+      else {
+        try{ const j=JSON.parse(xhr.responseText); reject(new Error(j.message||'فشل رفع المجلد')); }
+        catch(_){ reject(new Error('فشل رفع المجلد')); }
+      }
+    };
+    xhr.onerror=()=>reject(new Error('فشل الاتصال أثناء رفع المجلد.'));
+    xhr.send(fd);
+  });
+
+  pBar.style.width='100%';
+  pText.textContent='اكتمل رفع المجلد';
+  pSpeed.textContent=`تم رفع ${list.length} ملف`;
+  setTimeout(()=>location.reload(), 400);
+}
+
 quickFileInput?.addEventListener('change', ()=>{
   if(!quickFileInput.files?.length) return;
   uploadFiles(quickFileInput.files);
   quickFileInput.value='';
+});
+
+quickFolderInput?.addEventListener('change', ()=>{
+  if(!quickFolderInput.files?.length) return;
+  uploadFolderFiles(quickFolderInput.files).catch(e=>{ pWrap.classList.add('hidden'); showToast(e.message,'warn'); });
+  quickFolderInput.value='';
 });
 
 
