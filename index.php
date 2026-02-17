@@ -540,6 +540,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+
+        if ($action === 'upload_chunk') {
+            $uploadId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($_POST['upload_id'] ?? ''));
+            $chunkIndex = (int)($_POST['chunk_index'] ?? -1);
+            $totalChunks = (int)($_POST['total_chunks'] ?? 0);
+            if ($uploadId === '' || $chunkIndex < 0 || $totalChunks < 1) throw new RuntimeException('بيانات الرفع المجزأ غير صالحة.');
+            if (empty($_FILES['chunk']['tmp_name']) || (int)($_FILES['chunk']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+                throw new RuntimeException(upload_error_to_message((int)($_FILES['chunk']['error'] ?? UPLOAD_ERR_NO_FILE)));
+            }
+            $chunkRoot = rtrim($config['upload_dir'], '/') . '/.chunks/' . preg_replace('/[^a-zA-Z0-9_-]/', '', (string)$user['id']) . '/' . $uploadId;
+            if (!is_dir($chunkRoot) && !mkdir($chunkRoot, 0775, true) && !is_dir($chunkRoot)) {
+                throw new RuntimeException('تعذر إنشاء مساحة رفع مؤقتة.');
+            }
+            $dest = $chunkRoot . '/' . $chunkIndex . '.part';
+            if (!move_uploaded_file($_FILES['chunk']['tmp_name'], $dest)) throw new RuntimeException('تعذر حفظ جزء الرفع.');
+        }
+
+        if ($action === 'complete_chunk_upload') {
+            $uploadId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($_POST['upload_id'] ?? ''));
+            $totalChunks = (int)($_POST['total_chunks'] ?? 0);
+            $originalName = trim((string)($_POST['name'] ?? ''));
+            $relativePath = trim((string)($_POST['relative_path'] ?? ''));
+            $fileSize = (int)($_POST['size'] ?? 0);
+            $folderRaw = $_POST['folder_id'] ?? null;
+            $folderId = ($folderRaw === '' || $folderRaw === null) ? null : (int)$folderRaw;
+            if ($uploadId === '' || $totalChunks < 1 || $originalName === '') throw new RuntimeException('بيانات الإنهاء غير صالحة.');
+            if ($fileSize > (int)$config['max_upload_size']) throw new RuntimeException('الملف أكبر من 5 جيجابايت (حد التطبيق).');
+            $currentStorage = get_user_storage($pdo, $user['id']);
+            if (($currentStorage + $fileSize) > USER_STORAGE_LIMIT) throw new RuntimeException('تم تجاوز سعة المستخدم 1 تيرابايت.');
+
+            $logicalName = $relativePath !== '' ? basename($relativePath) : $originalName;
+            if (!is_extension_allowed($pdo, $logicalName)) throw new RuntimeException('امتداد الملف غير مسموح به من الإدارة.');
+
+            $chunkRoot = rtrim($config['upload_dir'], '/') . '/.chunks/' . preg_replace('/[^a-zA-Z0-9_-]/', '', (string)$user['id']) . '/' . $uploadId;
+            if (!is_dir($chunkRoot)) throw new RuntimeException('لم يتم العثور على أجزاء الرفع.');
+
+            $ext = pathinfo($logicalName, PATHINFO_EXTENSION);
+            $stored = bin2hex(random_bytes(20)) . ($ext ? '.' . $ext : '');
+            $dest = $config['upload_dir'] . '/' . $stored;
+            $out = fopen($dest, 'wb');
+            if (!$out) throw new RuntimeException('تعذر إنشاء الملف النهائي.');
+
+            try {
+                for ($i=0; $i<$totalChunks; $i++) {
+                    $part = $chunkRoot . '/' . $i . '.part';
+                    if (!is_file($part)) throw new RuntimeException('جزء مفقود من الرفع (chunk ' . $i . ').');
+                    $in = fopen($part, 'rb');
+                    if (!$in) throw new RuntimeException('تعذر قراءة جزء من الرفع.');
+                    stream_copy_to_stream($in, $out);
+                    fclose($in);
+                }
+            } finally {
+                fclose($out);
+            }
+
+            $mime = mime_content_type($dest) ?: 'application/octet-stream';
+            $uploadIp = get_client_ip();
+            $uploadCountry = get_country_code_from_request();
+            $st = $pdo->prepare('INSERT INTO files (user_id,user_name,folder_id,filename,stored_name,mime_type,size_bytes,relative_path,uploader_ip,uploader_country) VALUES (?,?,?,?,?,?,?,?,?,?)');
+            $st->execute([$user['id'], $user['name'], $folderId, $logicalName, $stored, $mime, $fileSize, 'uploads/' . $stored, $uploadIp, $uploadCountry]);
+
+            for ($i=0; $i<$totalChunks; $i++) {
+                $part = $chunkRoot . '/' . $i . '.part';
+                if (is_file($part)) @unlink($part);
+            }
+            @rmdir($chunkRoot);
+        }
+
         if ($action === 'upload' || $action === 'upload_ajax' || $action === 'upload_folder') {
             if (empty($_FILES['file']['name']) && empty($_FILES['files']['name'])) {
                 $contentLength = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
@@ -1529,58 +1597,98 @@ const pText = document.getElementById('uploadProgressText');
 const pSpeed = document.getElementById('uploadSpeedText');
 const activeFolderId = <?= $route==='folder' ? (int)$currentFolderId : 'null' ?>;
 
-function buildUploadFormData(file){
+
+const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB
+const CHUNK_CONCURRENCY = 4;
+const FILE_CONCURRENCY = 2;
+
+function generateUploadId(){
+  return 'up_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10);
+}
+
+async function postChunk(uploadId, file, chunkIndex, totalChunks){
+  const start=chunkIndex*CHUNK_SIZE;
+  const end=Math.min(start+CHUNK_SIZE, file.size);
+  const blob=file.slice(start,end);
   const fd=new FormData();
-  fd.append('action','upload_ajax');
-  fd.append('redirect', window.location.pathname);
+  fd.append('action','upload_chunk');
+  fd.append('upload_id', uploadId);
+  fd.append('chunk_index', String(chunkIndex));
+  fd.append('total_chunks', String(totalChunks));
+  fd.append('chunk', blob, file.name+`.part${chunkIndex}`);
+  const r=await fetch(window.location.pathname,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd});
+  const j=await r.json().catch(()=>({ok:false,message:'فشل رفع جزء من الملف'}));
+  if(!r.ok || !j.ok) throw new Error(j.message||'فشل رفع جزء من الملف');
+  return blob.size;
+}
+
+async function finalizeChunkUpload(uploadId, file, relativePath=''){
+  const totalChunks=Math.max(1, Math.ceil(file.size/CHUNK_SIZE));
+  const fd=new FormData();
+  fd.append('action','complete_chunk_upload');
+  fd.append('upload_id', uploadId);
+  fd.append('total_chunks', String(totalChunks));
+  fd.append('name', file.name);
+  fd.append('size', String(file.size));
+  fd.append('relative_path', relativePath||'');
   fd.append('folder_id', activeFolderId==null ? '' : String(activeFolderId));
-  fd.append('file', file);
-  return fd;
+  const r=await fetch(window.location.pathname,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd});
+  const j=await r.json().catch(()=>({ok:false,message:'فشل إنهاء رفع الملف'}));
+  if(!r.ok || !j.ok) throw new Error(j.message||'فشل إنهاء رفع الملف');
 }
 
-async function uploadSingleFile(file, idx, total){
-  return new Promise((resolve,reject)=>{
-    const xhr=new XMLHttpRequest();
-    xhr.open('POST', window.location.pathname, true);
-    const started=performance.now();
-
-    xhr.upload.onprogress=(ev)=>{
-      if(!ev.lengthComputable) return;
-      const percent=Math.round((ev.loaded/ev.total)*100);
-      pBar.style.width=percent+'%';
-      pText.textContent=`${idx}/${total} • ${percent}%`;
-      const elapsed=Math.max((performance.now()-started)/1000,0.001);
-      const speedMB=(ev.loaded/elapsed)/(1024*1024);
-      pSpeed.textContent=speedMB.toFixed(2)+' م.ب/ث';
-    };
-
-    xhr.onload=()=>{
-      if(xhr.status>=200 && xhr.status<300) resolve();
-      else {
-        try{ const j=JSON.parse(xhr.responseText); reject(new Error(j.message||'فشل الرفع')); }
-        catch(_){ reject(new Error('فشل الرفع')); }
-      }
-    };
-    xhr.onerror=()=>reject(new Error('فشل الاتصال أثناء الرفع.'));
-    xhr.send(buildUploadFormData(file));
-  });
+async function uploadFileInParallel(file, relativePath, onProgress){
+  const totalChunks=Math.max(1, Math.ceil(file.size/CHUNK_SIZE));
+  const uploadId=generateUploadId();
+  let nextIndex=0;
+  async function worker(){
+    while(nextIndex<totalChunks){
+      const current=nextIndex++;
+      const bytes=await postChunk(uploadId,file,current,totalChunks);
+      onProgress(bytes);
+    }
+  }
+  await Promise.all(Array.from({length:Math.min(CHUNK_CONCURRENCY,totalChunks)},()=>worker()));
+  await finalizeChunkUpload(uploadId,file,relativePath);
 }
 
-async function uploadFiles(files){
+async function uploadBatch(files, isFolder=false){
   const list=[...files];
   if(!list.length) return;
   const oversize=list.find(f=>f.size>MAX_FILE);
   if(oversize){ showToast('يوجد ملف أكبر من 5 جيجابايت.','warn'); return; }
+
+  const totalBytes=list.reduce((a,f)=>a+f.size,0);
+  let uploadedBytes=0;
+  const started=performance.now();
 
   pWrap.classList.remove('hidden');
   pBar.style.width='0%';
   pText.textContent='0%';
   pSpeed.textContent='0 م.ب/ث';
 
+  let idx=0;
+  async function fileWorker(){
+    while(idx<list.length){
+      const i=idx++;
+      const file=list[i];
+      const relativePath=isFolder ? (file.webkitRelativePath || file.name) : '';
+      await uploadFileInParallel(file, relativePath, (bytes)=>{
+        uploadedBytes += bytes;
+        const percent = totalBytes>0 ? Math.min(100, Math.round((uploadedBytes/totalBytes)*100)) : 100;
+        pBar.style.width=percent+'%';
+        pText.textContent=`${i+1}/${list.length} • ${percent}%`;
+        const elapsed=Math.max((performance.now()-started)/1000,0.001);
+        const speedMB=(uploadedBytes/elapsed)/(1024*1024);
+        pSpeed.textContent=speedMB.toFixed(2)+' م.ب/ث';
+      });
+    }
+  }
+
   try {
-    for(let i=0;i<list.length;i++) await uploadSingleFile(list[i], i+1, list.length);
+    await Promise.all(Array.from({length:Math.min(FILE_CONCURRENCY,list.length)},()=>fileWorker()));
     pBar.style.width='100%';
-    pText.textContent='اكتمل الرفع';
+    pText.textContent=isFolder ? 'اكتمل رفع المجلد' : 'اكتمل الرفع';
     pSpeed.textContent=`تم رفع ${list.length} ملف`;
     setTimeout(()=>location.reload(), 400);
   } catch (e) {
@@ -1589,66 +1697,15 @@ async function uploadFiles(files){
   }
 }
 
-async function uploadFolderFiles(files){
-  const list=[...files];
-  if(!list.length) return;
-
-  pWrap.classList.remove('hidden');
-  pBar.style.width='0%';
-  pText.textContent='0%';
-  pSpeed.textContent='0 م.ب/ث';
-
-  const fd=new FormData();
-  fd.append('action','upload_folder');
-  fd.append('redirect', window.location.pathname);
-  fd.append('folder_id', activeFolderId==null ? '' : String(activeFolderId));
-  list.forEach(f=>{
-    fd.append('files[]', f);
-    fd.append('relative_paths[]', f.webkitRelativePath || f.name);
-  });
-
-  await new Promise((resolve,reject)=>{
-    const xhr=new XMLHttpRequest();
-    xhr.open('POST', window.location.pathname, true);
-    xhr.setRequestHeader('X-Requested-With','XMLHttpRequest');
-    const started=performance.now();
-
-    xhr.upload.onprogress=(ev)=>{
-      if(!ev.lengthComputable) return;
-      const percent=Math.round((ev.loaded/ev.total)*100);
-      pBar.style.width=percent+'%';
-      pText.textContent=`${list.length} ملف • ${percent}%`;
-      const elapsed=Math.max((performance.now()-started)/1000,0.001);
-      const speedMB=(ev.loaded/elapsed)/(1024*1024);
-      pSpeed.textContent=speedMB.toFixed(2)+' م.ب/ث';
-    };
-
-    xhr.onload=()=>{
-      if(xhr.status>=200 && xhr.status<300) resolve();
-      else {
-        try{ const j=JSON.parse(xhr.responseText); reject(new Error(j.message||'فشل رفع المجلد')); }
-        catch(_){ reject(new Error('فشل رفع المجلد')); }
-      }
-    };
-    xhr.onerror=()=>reject(new Error('فشل الاتصال أثناء رفع المجلد.'));
-    xhr.send(fd);
-  });
-
-  pBar.style.width='100%';
-  pText.textContent='اكتمل رفع المجلد';
-  pSpeed.textContent=`تم رفع ${list.length} ملف`;
-  setTimeout(()=>location.reload(), 400);
-}
-
 quickFileInput?.addEventListener('change', ()=>{
   if(!quickFileInput.files?.length) return;
-  uploadFiles(quickFileInput.files);
+  uploadBatch(quickFileInput.files, false);
   quickFileInput.value='';
 });
 
 quickFolderInput?.addEventListener('change', ()=>{
   if(!quickFolderInput.files?.length) return;
-  uploadFolderFiles(quickFolderInput.files).catch(e=>{ pWrap.classList.add('hidden'); showToast(e.message,'warn'); });
+  uploadBatch(quickFolderInput.files, true);
   quickFolderInput.value='';
 });
 
@@ -1685,7 +1742,7 @@ window.addEventListener('drop',(e)=>{
   e.preventDefault();
   dragDepth=0;
   dropUploadOverlay?.classList.add('hidden');
-  uploadFiles(e.dataTransfer.files);
+  uploadBatch(e.dataTransfer.files, false);
 });
 
 const ctxMenu=document.getElementById('ctxMenu');
