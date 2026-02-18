@@ -199,6 +199,7 @@ function share_url(string $token, string $filename): string {
     if ($ext === '') $ext = 'bin';
     return '/s/' . $token . '.' . $ext;
 }
+function folder_share_url(string $token): string { return '/sf/' . rawurlencode($token); }
 function token(): string { return substr(bin2hex(random_bytes(3)), 0, 5); }
 
 function generate_share_token(PDO $pdo): string {
@@ -382,6 +383,39 @@ if (!empty($segments[0]) && $segments[0] === 's' && isset($segments[1])) {
     exit;
 }
 
+if (!empty($segments[0]) && $segments[0] === 'sf' && isset($segments[1])) {
+    if (!$pdo) { http_response_code(500); exit('DB error'); }
+    $token = trim((string)$segments[1]);
+    $qf = $pdo->prepare('SELECT id,name,user_id FROM folders WHERE shared_token=? LIMIT 1');
+    $qf->execute([$token]);
+    $folder = $qf->fetch();
+    if (!$folder) { http_response_code(404); exit('Shared folder not found'); }
+    $q = $pdo->prepare('SELECT id,filename,mime_type,size_bytes,shared_token,created_at,user_name FROM files WHERE folder_id=? AND is_trashed=0 AND shared_token IS NOT NULL ORDER BY created_at DESC');
+    $q->execute([(int)$folder['id']]);
+    $files = $q->fetchAll();
+    ?><!doctype html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>مشاركة مجلد - <?= htmlspecialchars((string)$folder['name']) ?></title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="/public/assets/style.css?v=<?= $cssVersion ?>" />
+</head><body>
+<div class="layout"><main class="content" style="margin:0 auto;max-width:1100px">
+<div class="section-head"><h2>مجلد مشترك: <?= htmlspecialchars((string)$folder['name']) ?></h2></div>
+<div class="files-grid">
+<?php if (!$files): ?><div class="empty">لا توجد ملفات متاحة في هذا المجلد حالياً.</div><?php endif; ?>
+<?php foreach ($files as $f): $surl = share_url((string)$f['shared_token'], (string)$f['filename']); ?>
+<div class="file-grid-card folder-card home-shared-card" data-share-url="<?= htmlspecialchars($surl) ?>" data-download-url="<?= htmlspecialchars($surl) ?>?download=1" data-name="<?= htmlspecialchars((string)$f['filename']) ?>">
+  <div class="file-grid-thumb-link"><?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars($surl) ?>" alt="thumb" /><?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?></div>
+  <strong><?= htmlspecialchars((string)$f['filename']) ?></strong>
+  <small>تمت المشاركة بواسطة <?= htmlspecialchars((string)$f['user_name']) ?></small>
+</div>
+<?php endforeach; ?>
+</div></main></div>
+</body></html><?php
+    exit;
+}
+
 if (!empty($segments[0]) && $segments[0] === 'd' && isset($segments[1])) {
     require_login();
     if (!$pdo) { http_response_code(500); exit('Database unavailable'); }
@@ -550,6 +584,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $tokenValue = $row['shared_token'] ? null : generate_share_token($pdo);
                 $st = $pdo->prepare('UPDATE files SET shared_token=? WHERE id=? AND user_id=?');
                 $st->execute([$tokenValue, $id, $user['id']]);
+            }
+        }
+
+        if ($action === 'toggle_share_folder') {
+            $id = (int)($_POST['id'] ?? 0);
+            $q = $pdo->prepare('SELECT shared_token FROM folders WHERE id=? AND user_id=? LIMIT 1');
+            $q->execute([$id, $user['id']]);
+            $row = $q->fetch();
+            if (!$row) throw new RuntimeException('المجلد غير موجود.');
+            $tokenValue = !empty($row['shared_token']) ? null : generate_share_token($pdo);
+            $st = $pdo->prepare('UPDATE folders SET shared_token=? WHERE id=? AND user_id=?');
+            $st->execute([$tokenValue, $id, $user['id']]);
+            if ($tokenValue) {
+                $qf = $pdo->prepare('SELECT id, shared_token FROM files WHERE user_id=? AND folder_id=? AND is_trashed=0');
+                $qf->execute([$user['id'], $id]);
+                $up = $pdo->prepare('UPDATE files SET shared_token=? WHERE id=? AND user_id=?');
+                foreach ($qf->fetchAll() as $f) {
+                    if (!empty($f['shared_token'])) continue;
+                    $up->execute([generate_share_token($pdo), (int)$f['id'], $user['id']]);
+                }
             }
         }
 
@@ -838,6 +892,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $payload['share_url'] = (!empty($rf['shared_token']) && !empty($rf['filename'])) ? share_url((string)$rf['shared_token'], (string)$rf['filename']) : null;
                 $payload['home_shared'] = !empty($rf['home_shared']) ? 1 : 0;
             }
+
+            if ($action === 'toggle_share_folder') {
+                $id = (int)($_POST['id'] ?? 0);
+                $qf = $pdo->prepare('SELECT shared_token,name FROM folders WHERE id=? AND user_id=? LIMIT 1');
+                $qf->execute([$id, $user['id']]);
+                $rf = $qf->fetch();
+                $payload['share_url'] = !empty($rf['shared_token']) ? folder_share_url((string)$rf['shared_token']) : null;
+            }
             if ($action === 'toggle_home_share_file') {
                 $fid = (int)($_POST['id'] ?? 0);
                 $qf = $pdo->prepare('SELECT filename,shared_token,home_shared FROM files WHERE id=? AND user_id=? LIMIT 1');
@@ -1002,7 +1064,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
     <div class="storage-card"><p>هذه الصفحة تعرض كل ما قام المستخدمون بمشاركته للعامة.</p></div>
   </aside>
   <main class="content">
-    <div class="section-head"><h2>الملفات والمجلدات المشتركة</h2></div>
+    <div class="section-head"><h2>المجلدات المشتركة</h2></div>
     <?php if ($sharedFolders): ?>
     <div class="folders-grid">
       <?php foreach ($sharedFolders as $sf): ?>
@@ -1013,6 +1075,7 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
       <?php endforeach; ?>
     </div>
     <?php endif; ?>
+    <div class="section-head" style="margin-top:10px"><h2>الملفات المشتركة</h2></div>
     <div class="files-grid">
       <?php if (!$sharedFiles): ?><div class="empty">لا توجد ملفات مشتركة حالياً.</div><?php endif; ?>
       <?php foreach ($sharedFiles as $f): ?>
@@ -1459,7 +1522,7 @@ function drawRegionsMap() {
     <input id="quickFolderInput" type="file" webkitdirectory directory multiple class="hidden" />
     <div id="dropUploadOverlay" class="drop-upload-overlay hidden"><div class="drop-upload-box">أفلت الملفات هنا لرفعها مباشرة</div></div>
 
-    <div class="section-head"><h2><?= htmlspecialchars($pageTitle) ?></h2><?php if ($route==='trash'): ?><button type="button" id="emptyTrashBtn" class="danger-btn"><i class="fas fa-trash"></i> حذف نهائي لكل الملفات</button><?php endif; ?></div>
+    <div class="section-head"><h2><?= $route==='home' ? 'المجلدات المشتركة' : htmlspecialchars($pageTitle) ?></h2><?php if ($route==='trash'): ?><button type="button" id="emptyTrashBtn" class="danger-btn"><i class="fas fa-trash"></i> حذف نهائي لكل الملفات</button><?php endif; ?></div>
 
     <div id="selectionSurface" class="selection-surface">
     <?php if ($route === 'home'): ?>
@@ -1474,6 +1537,7 @@ function drawRegionsMap() {
     </div>
     <?php endif; ?>
 
+    <div class="section-head" style="margin-top:10px"><h2>الملفات المشتركة</h2></div>
     <div class="files-grid" id="filesGrid">
       <?php if (!$sharedFiles): ?><div class="empty">لا توجد ملفات مشتركة حالياً.</div><?php endif; ?>
       <?php foreach ($sharedFiles as $f): ?>
@@ -1491,7 +1555,7 @@ function drawRegionsMap() {
     <?php else: ?>
     <div class="folders-grid">
       <?php foreach ($folders as $fd): ?>
-      <div class="folder-card" data-type="folder" data-id="<?= (int)$fd['id'] ?>" data-name="<?= htmlspecialchars($fd['name']) ?>" data-home-shared="<?= !empty($fd['home_shared']) ? '1':'0' ?>" data-href="/folders/<?= (int)$fd['id'] ?>">
+      <div class="folder-card" data-type="folder" data-id="<?= (int)$fd['id'] ?>" data-name="<?= htmlspecialchars($fd['name']) ?>" data-home-shared="<?= !empty($fd['home_shared']) ? '1':'0' ?>" data-shared="<?= !empty($fd['shared_token']) ? '1':'0' ?>" data-share-url="<?= !empty($fd['shared_token']) ? htmlspecialchars(folder_share_url((string)$fd['shared_token'])) : '' ?>" data-href="/folders/<?= (int)$fd['id'] ?>">
         <?php if (!empty($fd['preview_image'])): ?><img src="/<?= htmlspecialchars($fd['preview_image']) ?>" alt="preview" />
         <?php else: ?><div class="folder-placeholder">📁</div><?php endif; ?>
         <strong><?= htmlspecialchars($fd['name']) ?></strong>
@@ -1559,7 +1623,7 @@ function drawRegionsMap() {
 </div></div>
 
 <div id="shareModal" class="modal hidden"><div class="modal-box ShareDialog"><button class="close" data-close>×</button>
-  <h1 class="ShareDialog-title">مشاركة الملف</h1>
+  <h1 class="ShareDialog-title" id="shareDialogTitle">مشاركة الملف</h1>
   <div class="ShareDialog-itemInfo"><b id="shareFileName">-</b> (<span id="shareFileSize">-</span>)</div>
   <div class="ShareDialog-copyrightMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف لأنه محمي بحقوق النشر.</div>
   <div class="ShareDialog-dmcaMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف بسبب مطالبة DMCA.</div>
@@ -1957,6 +2021,7 @@ let homeCtxTarget=null;
 const selectionBar=document.getElementById('selectionBar');
 const selectionCount=document.getElementById('selectionCount');
 const shareModal=document.getElementById('shareModal');
+const shareDialogTitle=document.getElementById('shareDialogTitle');
 const shareFileName=document.getElementById('shareFileName');
 const shareFileSize=document.getElementById('shareFileSize');
 const shareLinkInput=document.getElementById('share-link-input');
@@ -2093,6 +2158,12 @@ function buildShareLinks(url, name){
 
 async function ensureShareUrl(el){
   if(el.dataset.shareUrl) return el.dataset.shareUrl;
+  if(el.dataset.type==='folder'){
+    const res=await postAction('toggle_share_folder',{id:el.dataset.id});
+    el.dataset.shareUrl=res.share_url||'';
+    el.dataset.shared=el.dataset.shareUrl?'1':'0';
+    return el.dataset.shareUrl;
+  }
   const res=await postAction('toggle_share_file',{id:el.dataset.id});
   el.dataset.shareUrl=res.share_url||'';
   el.dataset.shared=el.dataset.shareUrl?'1':'0';
@@ -2103,21 +2174,21 @@ async function openShareDialog(el){
   if(!el){ showToast('اختر عنصراً أولاً.','warn'); return; }
   shareTargetEl=el;
   const isFile=el.dataset.type==='file';
-  shareFileName.textContent=(el.dataset.name||'ملف');
+  const itemLabel=isFile?'ملف':'مجلد';
+  if(shareDialogTitle) shareDialogTitle.textContent='مشاركة ' + itemLabel;
+  shareFileName.textContent=(el.dataset.name||itemLabel);
   const sizeText=isFile ? (el.querySelector('small')?.textContent?.split('•')[0]?.trim()||'-') : 'مجلد';
   shareFileSize.textContent=sizeText;
   if(shareHomeToggle) shareHomeToggle.checked = (el.dataset.homeShared==='1');
 
-  const linksWrap=shareModal?.querySelector('.ShareDialog-links');
-  if(linksWrap) linksWrap.classList.toggle('hidden', !isFile);
+  const url=await ensureShareUrl(el);
+  if(!url){ showToast('تعذر إنشاء رابط مشاركة.','warn'); return; }
+  const full=window.location.origin+url;
+  shareLinkInput.value=full;
+  buildShareLinks(full, el.dataset.name||itemLabel);
 
-  if(isFile){
-    const url=await ensureShareUrl(el);
-    if(!url){ showToast('تعذر إنشاء رابط مشاركة.','warn'); return; }
-    const full=window.location.origin+url;
-    shareLinkInput.value=full;
-    buildShareLinks(full, el.dataset.name||'ملف');
-  }
+  const linksWrap=shareModal?.querySelector('.ShareDialog-links');
+  if(linksWrap) linksWrap.classList.remove('hidden');
 
   shareModal.classList.remove('hidden');
 }
@@ -2464,13 +2535,13 @@ shareHomeToggle?.addEventListener('change', async ()=>{
 
 
 shareCopyBtn?.addEventListener('click', async ()=>{
-  const primary=getPrimary();
-  if(!primary || primary.dataset.type!=='file'){ showToast('اختر ملفاً أولاً.','warn'); return; }
+  const primary=shareTargetEl || getPrimary();
+  if(!primary){ showToast('اختر عنصراً أولاً.','warn'); return; }
   const url=await ensureShareUrl(primary);
   if(!url){ showToast('تعذر إنشاء رابط مشاركة.','warn'); return; }
   const full=window.location.origin + url;
   shareLinkInput.value=full;
-  buildShareLinks(full, primary.dataset.name||'ملف');
+  buildShareLinks(full, primary.dataset.name||'عنصر');
   await navigator.clipboard.writeText(full);
   showToast('تم نسخ الرابط','success');
   updateSelectionMeta();
