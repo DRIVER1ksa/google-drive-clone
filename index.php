@@ -1,4 +1,6 @@
 <?php
+// نتحكم بهيدرات الكاش يدويًا لكل مسار؛ نوقف cache limiter الافتراضي للجلسات لتجنب Expires=1981
+session_cache_limiter('');
 session_start();
 $config = require __DIR__ . '/config.php';
 
@@ -26,6 +28,7 @@ function ensure_schema(PDO $pdo): void {
         name VARCHAR(255) NOT NULL,
         parent_id BIGINT UNSIGNED NULL,
         shared_token VARCHAR(64) NULL,
+        home_shared TINYINT(1) NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY uq_folder_token (shared_token),
         INDEX idx_user_parent (user_id, parent_id)
@@ -45,6 +48,7 @@ function ensure_schema(PDO $pdo): void {
       is_starred TINYINT(1) NOT NULL DEFAULT 0,
       is_trashed TINYINT(1) NOT NULL DEFAULT 0,
       download_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      home_shared TINYINT(1) NOT NULL DEFAULT 0,
       uploader_ip VARCHAR(64) NULL,
       uploader_country CHAR(2) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -60,6 +64,7 @@ function ensure_schema(PDO $pdo): void {
     if (!in_array('download_count', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN download_count BIGINT UNSIGNED NOT NULL DEFAULT 0");
     if (!in_array('uploader_ip', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN uploader_ip VARCHAR(64) NULL");
     if (!in_array('uploader_country', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN uploader_country CHAR(2) NULL");
+    if (!in_array('home_shared', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN home_shared TINYINT(1) NOT NULL DEFAULT 0");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS app_settings (
       `key` VARCHAR(100) PRIMARY KEY,
@@ -69,6 +74,7 @@ function ensure_schema(PDO $pdo): void {
 
     $fcols = $pdo->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='folders'")->fetchAll(PDO::FETCH_COLUMN);
     if (!in_array('shared_token', $fcols, true)) $pdo->exec("ALTER TABLE folders ADD COLUMN shared_token VARCHAR(64) NULL, ADD UNIQUE KEY uq_folder_token (shared_token)");
+    if (!in_array('home_shared', $fcols, true)) $pdo->exec("ALTER TABLE folders ADD COLUMN home_shared TINYINT(1) NOT NULL DEFAULT 0");
 }
 
 function xf_auth(array $config, string $login, string $password): ?array {
@@ -154,6 +160,20 @@ function get_client_ip(): string {
     return '0.0.0.0';
 }
 
+
+function upload_error_to_message(int $code): string {
+    return match ($code) {
+        UPLOAD_ERR_INI_SIZE => 'الملف يتجاوز حد upload_max_filesize في PHP.',
+        UPLOAD_ERR_FORM_SIZE => 'الملف يتجاوز الحد المسموح من النموذج.',
+        UPLOAD_ERR_PARTIAL => 'تم رفع الملف جزئياً فقط، حاول مجدداً.',
+        UPLOAD_ERR_NO_FILE => 'لم يتم اختيار ملف للرفع.',
+        UPLOAD_ERR_NO_TMP_DIR => 'مجلد الملفات المؤقتة غير متوفر على الخادم.',
+        UPLOAD_ERR_CANT_WRITE => 'تعذر كتابة الملف على القرص في الخادم.',
+        UPLOAD_ERR_EXTENSION => 'تم إيقاف الرفع بواسطة إضافة في PHP.',
+        default => 'فشل رفع الملف.',
+    };
+}
+
 function get_country_code_from_request(): string {
     $code = strtoupper(trim((string)($_SERVER['HTTP_CF_IPCOUNTRY'] ?? $_SERVER['GEOIP_COUNTRY_CODE'] ?? '')));
     if (preg_match('/^[A-Z]{2}$/', $code)) return $code;
@@ -189,6 +209,15 @@ function generate_share_token(PDO $pdo): string {
         if (!$q->fetchColumn()) return $candidate;
     }
     return substr(bin2hex(random_bytes(8)), 0, 12);
+}
+
+
+function folder_is_home_shared(PDO $pdo, string $userId, ?int $folderId): bool {
+    if ($folderId === null) return false;
+    $q = $pdo->prepare('SELECT home_shared FROM folders WHERE id=? AND user_id=? LIMIT 1');
+    $q->execute([$folderId, $userId]);
+    $row = $q->fetch();
+    return !empty($row['home_shared']);
 }
 
 function issue_download_gate(array $file, bool $isShared): string {
@@ -283,7 +312,7 @@ function render_download_page(array $file, string $downloadUrl, bool $isShared=f
       </div>
     </main>
     <footer class='footer'>جميع الحقوق محفوظة - سيف درايف</footer>
-    <script>
+<script>
       let c=8;const el=document.getElementById('count');const b=document.getElementById('dlBtn');
       const finalUrl={$downloadUrlJs};
       const t=setInterval(()=>{c--;el.textContent=c;if(c<=0){clearInterval(t);b.classList.add('active');b.innerHTML=`<i class='fa-solid fa-download'></i> <span>لتحميل الملف انقر هنا</span>`;b.href=finalUrl;}},1000);
@@ -304,6 +333,12 @@ $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?? '/';
 $path = trim($uri, '/');
 $segments = $path === '' ? [] : explode('/', $path);
 $cssVersion = @filemtime(__DIR__ . '/public/assets/style.css') ?: time();
+
+if (!empty($segments[0]) && $segments[0] === 'drive') {
+    $q = $_SERVER['QUERY_STRING'] ?? '';
+    header('Location: /files' . ($q ? ('?' . $q) : ''));
+    exit;
+}
 
 if (!empty($segments[0]) && $segments[0] === 's' && isset($segments[1])) {
     if (!$pdo) { http_response_code(500); exit('DB error'); }
@@ -339,7 +374,7 @@ if (!empty($segments[0]) && $segments[0] === 's' && isset($segments[1])) {
     header('Content-Length: ' . $fsize);
     header('ETag: ' . $etag);
     header('Last-Modified: ' . gmdate('D, d M Y H:i:s', $mtime) . ' GMT');
-    if (str_starts_with((string)$mimeOut, 'image/')) header('Cache-Control: private, max-age=86400');
+    if (str_starts_with((string)$mimeOut, 'image/')) header('Cache-Control: private, max-age=604800, immutable');
     else header('Cache-Control: private, max-age=3600');
     $disp = $downloadFlag ? 'attachment' : 'inline';
     header("Content-Disposition: {$disp}; filename*=UTF-8''" . rawurlencode($file['filename']));
@@ -378,7 +413,7 @@ if (!empty($segments[0]) && $segments[0] === 'd' && isset($segments[1])) {
     header('Content-Length: ' . $fsize);
     header('ETag: ' . $etag);
     header('Last-Modified: ' . gmdate('D, d M Y H:i:s', $mtime) . ' GMT');
-    if (str_starts_with((string)$mimeOut, 'image/')) header('Cache-Control: private, max-age=86400');
+    if (str_starts_with((string)$mimeOut, 'image/')) header('Cache-Control: private, max-age=604800, immutable');
     else header('Cache-Control: private, max-age=3600');
     $disp = $downloadFlag ? 'attachment' : 'inline';
     header("Content-Disposition: {$disp}; filename*=UTF-8''" . rawurlencode($file['filename']));
@@ -394,11 +429,10 @@ if (!empty($segments[0]) && $segments[0] === 'logout') {
 
 $route = 'login';
 $currentFolderId = null;
-if (empty($segments)) $route = empty($_SESSION['user']) ? 'login' : 'drive';
+if (empty($segments)) $route = empty($_SESSION['user']) ? 'login' : 'files';
 elseif ($segments[0] === 'login') $route = 'login';
-elseif ($segments[0] === 'drive' || $segments[0] === 'home') $route = 'drive';
-elseif ($segments[0] === 'recent') $route = 'recent';
-elseif ($segments[0] === 'starred') $route = 'starred';
+elseif ($segments[0] === 'files') $route = 'files';
+elseif ($segments[0] === 'home') $route = 'home';
 elseif ($segments[0] === 'trash') $route = 'trash';
 elseif ($segments[0] === 'search') $route = 'search';
 elseif ($segments[0] === 'folders' && isset($segments[1])) { $route = 'folder'; $currentFolderId = (int)$segments[1]; }
@@ -420,13 +454,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $xf = xf_auth($config, trim($_POST['username'] ?? ''), (string)($_POST['password'] ?? ''));
             if (!$xf) throw new RuntimeException('فشل تسجيل الدخول عبر XenForo API.');
             $_SESSION['user'] = $xf;
-            header('Location: /drive'); exit;
+            header('Location: /files'); exit;
         }
 
         require_login();
         if (!$pdo) throw new RuntimeException('قاعدة البيانات غير متاحة حالياً.');
         $user = $_SESSION['user'];
-        $redirect = $_POST['redirect'] ?? '/drive';
+        $redirect = $_POST['redirect'] ?? '/files';
 
         if (str_starts_with($action, 'admin_')) {
             require_admin($config);
@@ -519,15 +553,129 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+
+        if ($action === 'toggle_home_share_file') {
+            $id = (int)($_POST['id'] ?? 0);
+            $enabled = (int)($_POST['enabled'] ?? 0) === 1 ? 1 : 0;
+            $q = $pdo->prepare('SELECT shared_token FROM files WHERE id=? AND user_id=? LIMIT 1');
+            $q->execute([$id, $user['id']]);
+            $row = $q->fetch();
+            if (!$row) throw new RuntimeException('الملف غير موجود.');
+            $token = $row['shared_token'];
+            if ($enabled && empty($token)) $token = generate_share_token($pdo);
+            $st = $pdo->prepare('UPDATE files SET home_shared=?, shared_token=? WHERE id=? AND user_id=?');
+            $st->execute([$enabled, $token, $id, $user['id']]);
+        }
+
+        if ($action === 'toggle_home_share_folder') {
+            $id = (int)($_POST['id'] ?? 0);
+            $enabled = (int)($_POST['enabled'] ?? 0) === 1 ? 1 : 0;
+            $st = $pdo->prepare('UPDATE folders SET home_shared=? WHERE id=? AND user_id=?');
+            $st->execute([$enabled, $id, $user['id']]);
+            if ($enabled) {
+                $q = $pdo->prepare('SELECT id, shared_token FROM files WHERE user_id=? AND folder_id=? AND is_trashed=0');
+                $q->execute([$user['id'], $id]);
+                $up = $pdo->prepare('UPDATE files SET shared_token=? WHERE id=? AND user_id=?');
+                foreach ($q->fetchAll() as $f) {
+                    if (!empty($f['shared_token'])) continue;
+                    $up->execute([generate_share_token($pdo), (int)$f['id'], $user['id']]);
+                }
+            }
+        }
+
+
+
+        if ($action === 'upload_chunk') {
+            $uploadId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($_POST['upload_id'] ?? ''));
+            $chunkIndex = (int)($_POST['chunk_index'] ?? -1);
+            $totalChunks = (int)($_POST['total_chunks'] ?? 0);
+            if ($uploadId === '' || $chunkIndex < 0 || $totalChunks < 1) throw new RuntimeException('بيانات الرفع المجزأ غير صالحة.');
+            if (empty($_FILES['chunk']['tmp_name']) || (int)($_FILES['chunk']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+                throw new RuntimeException(upload_error_to_message((int)($_FILES['chunk']['error'] ?? UPLOAD_ERR_NO_FILE)));
+            }
+            $chunkRoot = rtrim($config['upload_dir'], '/') . '/.chunks/' . preg_replace('/[^a-zA-Z0-9_-]/', '', (string)$user['id']) . '/' . $uploadId;
+            if (!is_dir($chunkRoot) && !mkdir($chunkRoot, 0775, true) && !is_dir($chunkRoot)) {
+                throw new RuntimeException('تعذر إنشاء مساحة رفع مؤقتة.');
+            }
+            $dest = $chunkRoot . '/' . $chunkIndex . '.part';
+            if (!move_uploaded_file($_FILES['chunk']['tmp_name'], $dest)) throw new RuntimeException('تعذر حفظ جزء الرفع.');
+        }
+
+        if ($action === 'complete_chunk_upload') {
+            $uploadId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($_POST['upload_id'] ?? ''));
+            $totalChunks = (int)($_POST['total_chunks'] ?? 0);
+            $originalName = trim((string)($_POST['name'] ?? ''));
+            $relativePath = trim((string)($_POST['relative_path'] ?? ''));
+            $fileSize = (int)($_POST['size'] ?? 0);
+            $folderRaw = $_POST['folder_id'] ?? null;
+            $folderId = ($folderRaw === '' || $folderRaw === null) ? null : (int)$folderRaw;
+            if ($uploadId === '' || $totalChunks < 1 || $originalName === '') throw new RuntimeException('بيانات الإنهاء غير صالحة.');
+            if ($fileSize > (int)$config['max_upload_size']) throw new RuntimeException('الملف أكبر من 5 جيجابايت (حد التطبيق).');
+            $currentStorage = get_user_storage($pdo, $user['id']);
+            if (($currentStorage + $fileSize) > USER_STORAGE_LIMIT) throw new RuntimeException('تم تجاوز سعة المستخدم 1 تيرابايت.');
+
+            $logicalName = $relativePath !== '' ? basename($relativePath) : $originalName;
+            if (!is_extension_allowed($pdo, $logicalName)) throw new RuntimeException('امتداد الملف غير مسموح به من الإدارة.');
+
+            $chunkRoot = rtrim($config['upload_dir'], '/') . '/.chunks/' . preg_replace('/[^a-zA-Z0-9_-]/', '', (string)$user['id']) . '/' . $uploadId;
+            if (!is_dir($chunkRoot)) throw new RuntimeException('لم يتم العثور على أجزاء الرفع.');
+
+            $ext = pathinfo($logicalName, PATHINFO_EXTENSION);
+            $stored = bin2hex(random_bytes(20)) . ($ext ? '.' . $ext : '');
+            $dest = $config['upload_dir'] . '/' . $stored;
+            $out = fopen($dest, 'wb');
+            if (!$out) throw new RuntimeException('تعذر إنشاء الملف النهائي.');
+
+            try {
+                for ($i=0; $i<$totalChunks; $i++) {
+                    $part = $chunkRoot . '/' . $i . '.part';
+                    if (!is_file($part)) throw new RuntimeException('جزء مفقود من الرفع (chunk ' . $i . ').');
+                    $in = fopen($part, 'rb');
+                    if (!$in) throw new RuntimeException('تعذر قراءة جزء من الرفع.');
+                    stream_copy_to_stream($in, $out);
+                    fclose($in);
+                }
+            } finally {
+                fclose($out);
+            }
+
+            $mime = mime_content_type($dest) ?: 'application/octet-stream';
+            $uploadIp = get_client_ip();
+            $uploadCountry = get_country_code_from_request();
+            $shareToken = folder_is_home_shared($pdo, (string)$user['id'], $folderId) ? generate_share_token($pdo) : null;
+            $st = $pdo->prepare('INSERT INTO files (user_id,user_name,folder_id,filename,stored_name,mime_type,size_bytes,relative_path,shared_token,uploader_ip,uploader_country) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+            $st->execute([$user['id'], $user['name'], $folderId, $logicalName, $stored, $mime, $fileSize, 'uploads/' . $stored, $shareToken, $uploadIp, $uploadCountry]);
+
+            for ($i=0; $i<$totalChunks; $i++) {
+                $part = $chunkRoot . '/' . $i . '.part';
+                if (is_file($part)) @unlink($part);
+            }
+            @rmdir($chunkRoot);
+        }
+
         if ($action === 'upload' || $action === 'upload_ajax' || $action === 'upload_folder') {
-            if (empty($_FILES['file']['name']) && empty($_FILES['files']['name'])) throw new RuntimeException('اختر ملفاً أو مجلداً أولاً.');
+            if (empty($_FILES['file']['name']) && empty($_FILES['files']['name'])) {
+                $contentLength = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
+                $postMax = (string)ini_get('post_max_size');
+                $uploadMax = (string)ini_get('upload_max_filesize');
+                if ($contentLength > 0) {
+                    throw new RuntimeException('فشل الرفع بسبب حدود PHP/الخادم. upload_max_filesize=' . $uploadMax . ' و post_max_size=' . $postMax . '. إذا كان لديك Nginx تأكد من client_max_body_size أيضاً.');
+                }
+                throw new RuntimeException('اختر ملفاً أو مجلداً أولاً.');
+            }
             $currentStorage = get_user_storage($pdo, $user['id']);
             $uploadIp = get_client_ip();
             $uploadCountry = get_country_code_from_request();
 
             $processSingle = function(array $one, ?int $folderId, ?string $displayName=null) use (&$currentStorage, $config, $pdo, $user, $uploadIp, $uploadCountry) {
-                if ($one['error'] !== UPLOAD_ERR_OK) throw new RuntimeException('فشل رفع ملف.');
-                if ((int)$one['size'] > (int)$config['max_upload_size']) throw new RuntimeException('الملف أكبر من 5 جيجابايت.');
+                $err = (int)($one['error'] ?? UPLOAD_ERR_NO_FILE);
+                if ($err !== UPLOAD_ERR_OK) {
+                    $base = upload_error_to_message($err);
+                    $postMax = (string)ini_get('post_max_size');
+                    $uploadMax = (string)ini_get('upload_max_filesize');
+                    throw new RuntimeException($base . ' (upload_max_filesize=' . $uploadMax . ', post_max_size=' . $postMax . ')');
+                }
+                if ((int)$one['size'] > (int)$config['max_upload_size']) throw new RuntimeException('الملف أكبر من 5 جيجابايت (حد التطبيق).');
                 if (($currentStorage + (int)$one['size']) > USER_STORAGE_LIMIT) throw new RuntimeException('تم تجاوز سعة المستخدم 1 تيرابايت.');
                 $name = $displayName ?: (string)$one['name'];
                 if (!is_extension_allowed($pdo, $name)) throw new RuntimeException('امتداد الملف غير مسموح به من الإدارة.');
@@ -536,8 +684,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $dest = $config['upload_dir'] . '/' . $stored;
                 if (!move_uploaded_file($one['tmp_name'], $dest)) throw new RuntimeException('تعذر حفظ الملف.');
                 $mime = mime_content_type($dest) ?: 'application/octet-stream';
-                $st = $pdo->prepare('INSERT INTO files (user_id,user_name,folder_id,filename,stored_name,mime_type,size_bytes,relative_path,uploader_ip,uploader_country) VALUES (?,?,?,?,?,?,?,?,?,?)');
-                $st->execute([$user['id'], $user['name'], $folderId, $name, $stored, $mime, (int)$one['size'], 'uploads/' . $stored, $uploadIp, $uploadCountry]);
+                $shareToken = folder_is_home_shared($pdo, (string)$user['id'], $folderId) ? generate_share_token($pdo) : null;
+                $st = $pdo->prepare('INSERT INTO files (user_id,user_name,folder_id,filename,stored_name,mime_type,size_bytes,relative_path,shared_token,uploader_ip,uploader_country) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+                $st->execute([$user['id'], $user['name'], $folderId, $name, $stored, $mime, (int)$one['size'], 'uploads/' . $stored, $shareToken, $uploadIp, $uploadCountry]);
                 $currentStorage += (int)$one['size'];
             };
 
@@ -608,16 +757,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $id = (int)($_POST['id'] ?? 0);
             $toRaw = $_POST['target_folder_id'] ?? '';
             $to = ($toRaw === '') ? null : (int)$toRaw;
-            $st = $pdo->prepare('UPDATE files SET folder_id=? WHERE id=? AND user_id=?');
+            $st = $pdo->prepare('UPDATE files SET folder_id=?, is_trashed=0 WHERE id=? AND user_id=?');
             $st->execute([$to, $id, $user['id']]);
         }
 
-        if (in_array($action, ['toggle_star','trash','restore','delete'], true)) {
+        if ($action === 'move_items') {
+            $toRaw = $_POST['target_folder_id'] ?? '';
+            $to = ($toRaw === '') ? null : (int)$toRaw;
+            $fileIds = $_POST['file_ids'] ?? [];
+            $folderIds = $_POST['folder_ids'] ?? [];
+            if (!is_array($fileIds)) $fileIds = [];
+            if (!is_array($folderIds)) $folderIds = [];
+
+            $fileIds = array_values(array_filter(array_map('intval', $fileIds), fn($v) => $v > 0));
+            $folderIds = array_values(array_filter(array_map('intval', $folderIds), fn($v) => $v > 0));
+
+            if ($fileIds) {
+                $stFile = $pdo->prepare('UPDATE files SET folder_id=?, is_trashed=0 WHERE id=? AND user_id=?');
+                foreach ($fileIds as $fid) {
+                    $stFile->execute([$to, $fid, $user['id']]);
+                }
+            }
+
+            if ($folderIds) {
+                $stFolder = $pdo->prepare('UPDATE folders SET parent_id=? WHERE id=? AND user_id=?');
+                foreach ($folderIds as $folderId) {
+                    if ($to !== null && $to === $folderId) {
+                        throw new RuntimeException('لا يمكن نقل المجلد إلى نفسه.');
+                    }
+                    $stFolder->execute([$to, $folderId, $user['id']]);
+                }
+            }
+        }
+
+        if ($action === 'move_folder') {
             $id = (int)($_POST['id'] ?? 0);
-            if ($action === 'toggle_star') {
-                $st = $pdo->prepare('UPDATE files SET is_starred=1-is_starred WHERE id=? AND user_id=?');
-                $st->execute([$id, $user['id']]);
-            } elseif ($action === 'trash') {
+            $toRaw = $_POST['target_folder_id'] ?? '';
+            $to = ($toRaw === '') ? null : (int)$toRaw;
+            if ($to === $id) throw new RuntimeException('لا يمكن نقل المجلد إلى نفسه.');
+            $st = $pdo->prepare('UPDATE folders SET parent_id=? WHERE id=? AND user_id=?');
+            $st->execute([$to, $id, $user['id']]);
+        }
+
+        if ($action === 'empty_trash') {
+            $q = $pdo->prepare('SELECT relative_path FROM files WHERE user_id=? AND is_trashed=1');
+            $q->execute([$user['id']]);
+            foreach ($q->fetchAll() as $row) {
+                $path = __DIR__ . '/' . $row['relative_path'];
+                if (is_file($path)) @unlink($path);
+            }
+            $del = $pdo->prepare('DELETE FROM files WHERE user_id=? AND is_trashed=1');
+            $del->execute([$user['id']]);
+        }
+
+        if (in_array($action, ['trash','restore','delete'], true)) {
+            $id = (int)($_POST['id'] ?? 0);
+            if ($action === 'trash') {
                 $st = $pdo->prepare('UPDATE files SET is_trashed=1 WHERE id=? AND user_id=?');
                 $st->execute([$id, $user['id']]);
             } elseif ($action === 'restore') {
@@ -637,10 +832,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $payload = ['ok' => true, 'message' => 'تم التنفيذ بنجاح'];
             if ($action === 'toggle_share_file') {
                 $fid = (int)($_POST['id'] ?? 0);
-                $qf = $pdo->prepare('SELECT filename,shared_token FROM files WHERE id=? AND user_id=? LIMIT 1');
+                $qf = $pdo->prepare('SELECT filename,shared_token,home_shared FROM files WHERE id=? AND user_id=? LIMIT 1');
                 $qf->execute([$fid, $user['id']]);
                 $rf = $qf->fetch();
                 $payload['share_url'] = (!empty($rf['shared_token']) && !empty($rf['filename'])) ? share_url((string)$rf['shared_token'], (string)$rf['filename']) : null;
+                $payload['home_shared'] = !empty($rf['home_shared']) ? 1 : 0;
+            }
+            if ($action === 'toggle_home_share_file') {
+                $fid = (int)($_POST['id'] ?? 0);
+                $qf = $pdo->prepare('SELECT filename,shared_token,home_shared FROM files WHERE id=? AND user_id=? LIMIT 1');
+                $qf->execute([$fid, $user['id']]);
+                $rf = $qf->fetch();
+                $payload['home_shared'] = !empty($rf['home_shared']) ? 1 : 0;
+                $payload['share_url'] = (!empty($rf['shared_token']) && !empty($rf['filename'])) ? share_url((string)$rf['shared_token'], (string)$rf['filename']) : null;
+            }
+            if ($action === 'toggle_home_share_folder') {
+                $id = (int)($_POST['id'] ?? 0);
+                $qf = $pdo->prepare('SELECT home_shared FROM folders WHERE id=? AND user_id=? LIMIT 1');
+                $qf->execute([$id, $user['id']]);
+                $rf = $qf->fetch();
+                $payload['home_shared'] = !empty($rf['home_shared']) ? 1 : 0;
             }
             header('Content-Type: application/json; charset=utf-8');
             echo json_encode($payload);
@@ -660,7 +871,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $user = $_SESSION['user'] ?? null;
-if ($route !== 'login') require_login();
+if (!in_array($route, ['login','home'], true)) require_login();
 if (str_starts_with($route, 'admin')) require_admin($config);
 
 $files = [];
@@ -669,6 +880,9 @@ $allFolders = [];
 $storage = 0;
 $search = trim((string)($_GET['q'] ?? ''));
 $pageTitle = 'ملفاتي';
+$sharedFiles = [];
+$sharedFolders = [];
+$sharedFolderFilter = isset($_GET['sfolder']) ? max(0, (int)$_GET['sfolder']) : 0;
 $adminStats = ['files'=>0,'users'=>0,'shared'=>0,'size'=>0,'downloads'=>0];
 $adminFiles = [];
 $adminUsers = [];
@@ -686,7 +900,7 @@ if ($user && str_starts_with($route, 'admin') && $pdo) {
         'size' => (int)$pdo->query('SELECT COALESCE(SUM(size_bytes),0) FROM files')->fetchColumn(),
         'downloads' => (int)$pdo->query('SELECT COALESCE(SUM(download_count),0) FROM files')->fetchColumn(),
     ];
-    $adminFiles = $pdo->query('SELECT id,user_id,user_name,filename,mime_type,size_bytes,folder_id,shared_token,is_trashed,created_at,uploader_country FROM files ORDER BY created_at DESC LIMIT 800')->fetchAll();
+    $adminFiles = $pdo->query("SELECT id,user_id,user_name,filename,mime_type,size_bytes,folder_id,shared_token,is_trashed,created_at,uploader_country,relative_path FROM files WHERE (mime_type NOT LIKE 'image/%' OR mime_type IS NULL OR mime_type='') ORDER BY created_at DESC LIMIT 800")->fetchAll();
     $adminUsers = $pdo->query('SELECT user_id, MIN(user_name) user_name, COUNT(*) files_count, COALESCE(SUM(size_bytes),0) total_size FROM files GROUP BY user_id ORDER BY files_count DESC LIMIT 500')->fetchAll();
     $adminFolders = $pdo->query('SELECT id,name,user_id FROM folders ORDER BY id DESC LIMIT 1000')->fetchAll();
 
@@ -696,11 +910,24 @@ if ($user && str_starts_with($route, 'admin') && $pdo) {
     $stMonth = $pdo->query("SELECT DATE_FORMAT(created_at, '%Y-%m') month_key, COUNT(*) files_count FROM files GROUP BY DATE_FORMAT(created_at, '%Y-%m') ORDER BY month_key ASC LIMIT 12");
     $adminUploadsByMonth = $stMonth->fetchAll();
 
-    $stImages = $pdo->query("SELECT id,filename,relative_path,size_bytes,user_name,user_id,created_at FROM files WHERE mime_type LIKE 'image/%' AND is_trashed=0 ORDER BY created_at DESC LIMIT 120");
+    $stImages = $pdo->query("SELECT id,filename,relative_path,size_bytes,user_name,user_id,created_at,shared_token FROM files WHERE mime_type LIKE 'image/%' AND is_trashed=0 ORDER BY created_at DESC LIMIT 120");
     $adminImageFiles = $stImages->fetchAll();
 
     $allowedExtDisplay = get_setting($pdo, 'allowed_extensions', '*') ?: '*';
     $pageTitle = 'لوحة تحكم الإدارة';
+}
+
+if ($route === 'home' && $pdo) {
+    $sharedFolders = $pdo->query("SELECT id AS folder_id, name AS folder_name FROM folders WHERE home_shared=1 ORDER BY name ASC")->fetchAll();
+
+    if ($sharedFolderFilter > 0) {
+        $stShared = $pdo->prepare('SELECT f.id,f.filename,f.mime_type,f.size_bytes,f.created_at,f.shared_token,f.folder_id,f.user_name FROM files f LEFT JOIN folders d ON d.id=f.folder_id WHERE f.is_trashed=0 AND f.shared_token IS NOT NULL AND f.folder_id=? AND (f.home_shared=1 OR COALESCE(d.home_shared,0)=1) ORDER BY f.created_at DESC LIMIT 600');
+        $stShared->execute([$sharedFolderFilter]);
+    } else {
+        $stShared = $pdo->query('SELECT f.id,f.filename,f.mime_type,f.size_bytes,f.created_at,f.shared_token,f.folder_id,f.user_name FROM files f LEFT JOIN folders d ON d.id=f.folder_id WHERE f.is_trashed=0 AND f.shared_token IS NOT NULL AND (f.home_shared=1 OR COALESCE(d.home_shared,0)=1) ORDER BY f.created_at DESC LIMIT 600');
+    }
+    $sharedFiles = $stShared->fetchAll();
+    $pageTitle = 'الرئيسية';
 }
 
 if ($user && $route !== 'login' && !str_starts_with($route, 'admin') && $pdo) {
@@ -710,9 +937,9 @@ if ($user && $route !== 'login' && !str_starts_with($route, 'admin') && $pdo) {
     $all->execute([$user['id']]);
     $allFolders = $all->fetchAll();
 
-    if (in_array($route, ['drive','folder'], true)) {
+    if (in_array($route, ['files','folder'], true)) {
         $parent = $route === 'folder' ? $currentFolderId : null;
-        $fdr = $pdo->prepare("SELECT f.*, 
+        $fdr = $pdo->prepare("SELECT f.*, f.home_shared, 
             (SELECT relative_path FROM files x WHERE x.user_id=f.user_id AND x.folder_id=f.id AND x.is_trashed=0 AND x.mime_type LIKE 'image/%' ORDER BY x.created_at DESC LIMIT 1) preview_image,
             (SELECT COUNT(*) FROM files x WHERE x.user_id=f.user_id AND x.folder_id=f.id AND x.is_trashed=0) items_count
             FROM folders f WHERE f.user_id=? AND ((f.parent_id IS NULL AND ? IS NULL) OR f.parent_id=?) ORDER BY f.name");
@@ -722,10 +949,9 @@ if ($user && $route !== 'login' && !str_starts_with($route, 'admin') && $pdo) {
 
     $where = 'user_id=:uid';
     if ($route === 'trash') $where .= ' AND is_trashed=1'; else $where .= ' AND is_trashed=0';
-    if ($route === 'starred') $where .= ' AND is_starred=1';
     if ($route === 'search') $where .= ' AND filename LIKE :search';
     if ($route === 'folder') $where .= ' AND folder_id=:folder';
-    if ($route === 'drive') $where .= ' AND folder_id IS NULL';
+    if ($route === 'files') $where .= ' AND folder_id IS NULL';
 
     $st = $pdo->prepare("SELECT * FROM files WHERE $where ORDER BY created_at DESC");
     $st->bindValue(':uid', $user['id']);
@@ -734,7 +960,7 @@ if ($user && $route !== 'login' && !str_starts_with($route, 'admin') && $pdo) {
     $st->execute();
     $files = $st->fetchAll();
 
-    $map = ['drive'=>'ملفاتي','recent'=>'الأحدث','starred'=>'المميزة','trash'=>'سلة المحذوفات','search'=>'نتائج البحث','folder'=>'مجلد'];
+    $map = ['files'=>'ملفاتي','trash'=>'سلة المحذوفات','search'=>'نتائج البحث','folder'=>'مجلد'];
     $pageTitle = $map[$route] ?? 'ملفاتي';
 }
 
@@ -747,10 +973,65 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>سيف درايف</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" />
+  <script src="https://kit.fontawesome.com/ff30351e57.js" crossorigin="anonymous"></script>
   <link rel="stylesheet" href="/public/assets/style.css?v=<?= $cssVersion ?>" />
 </head>
 <body>
-<?php if ($route === 'login'): ?>
+<?php if ($route === 'home' && !$user): ?>
+<header class="topbar"> 
+  <div class="brand"><img src="/public/game-zone-logo.svg" alt="GAME ZONE"/><span>الرئيسية</span></div>
+  <form class="search" method="get" action="/home"><input name="q" placeholder="الملفات المشتركة" value=""/></form>
+  <div class="profile">
+    <?php if ($user): ?>
+      <img width="38" height="38" src="<?= htmlspecialchars($user['avatar'] ?: '/public/myimg.png') ?>" alt="avatar"/>
+      <span><?= htmlspecialchars($user['name']) ?></span>
+      <a class="header-logout" href="/files">ملفاتي</a>
+      <a class="header-logout" href="/logout">خروج</a>
+    <?php else: ?>
+      <a class="header-logout" href="/files">ملفاتي</a>
+      <a class="header-logout" href="/login">تسجيل الدخول</a>
+    <?php endif; ?>
+  </div>
+</header>
+<div class="layout">
+  <aside class="sidebar modern-sidebar">
+    <nav class="sidebar-nav">
+      <a href="/home" class="active"><i class="fas fa-house"></i><span>الرئيسية</span></a>
+      <?php if ($user): ?><a href="/files"><i class="far fa-folder-open"></i><span>ملفاتي</span></a><?php else: ?><a href="/login"><i class="fas fa-sign-in-alt"></i><span>تسجيل الدخول</span></a><?php endif; ?>
+    </nav>
+    <div class="storage-card"><p>هذه الصفحة تعرض كل ما قام المستخدمون بمشاركته للعامة.</p></div>
+  </aside>
+  <main class="content">
+    <div class="section-head"><h2>الملفات والمجلدات المشتركة</h2></div>
+    <?php if ($sharedFolders): ?>
+    <div class="folders-grid">
+      <?php foreach ($sharedFolders as $sf): ?>
+      <div class="folder-card" onclick="location.href='/home?sfolder=<?= (int)$sf['folder_id'] ?>'" style="cursor:pointer">
+        <div class="folder-placeholder"><i class="fas fa-folder"></i></div>
+        <strong><?= htmlspecialchars($sf['folder_name']) ?></strong>
+      </div>
+      <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+    <div class="files-grid">
+      <?php if (!$sharedFiles): ?><div class="empty">لا توجد ملفات مشتركة حالياً.</div><?php endif; ?>
+      <?php foreach ($sharedFiles as $f): ?>
+      <?php $surl = share_url((string)$f['shared_token'], (string)$f['filename']); ?>
+      <div class="file-grid-card folder-card home-shared-card" data-share-url="<?= htmlspecialchars($surl) ?>" data-download-url="<?= htmlspecialchars($surl) ?>?download=1" data-name="<?= htmlspecialchars((string)$f['filename']) ?>">
+        <div class="file-grid-thumb-link">
+          <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars($surl) ?>" alt="thumb" />
+          <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
+        </div>
+        <strong><?= htmlspecialchars($f['filename']) ?></strong>
+        <small>تمت المشاركة بواسطة <?= htmlspecialchars((string)$f['user_name']) ?></small>
+      </div>
+      <?php endforeach; ?>
+    </div>
+  </main>
+</div>
+<script>
+</script>
+<?php elseif ($route === 'login'): ?>
 <main class="login-wrap">
   <section class="login-card">
     <img src="/public/drive.svg" class="logo" alt="logo" />
@@ -794,7 +1075,8 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
 .admin-shell{display:grid;grid-template-columns:270px 1fr;gap:14px;min-height:calc(100vh - 0px);padding:14px}
 .admin-side{background:#1f2933;color:#d5dbe2;padding:18px 14px;border-radius:14px;border:1px solid #2e3743;box-shadow:0 10px 24px #00000022}
 .admin-side h2{margin:0 0 16px;font-size:30px;color:#fff}
-.admin-side a{display:block;color:#d5dbe2;text-decoration:none;padding:10px 8px;border-radius:8px;margin-bottom:4px}
+.admin-side a{display:flex;align-items:center;gap:8px;color:#d5dbe2;text-decoration:none;padding:10px 8px;border-radius:8px;margin-bottom:4px}
+.admin-side a i{width:18px;text-align:center}
 .admin-side a:hover,.admin-side a.active{background:#323f4b}
 .admin-main{padding:18px;background:#eef2f5}
 .admin-top{display:flex;justify-content:space-between;align-items:center;background:#fff;border:1px solid #d7dde3;border-radius:10px;padding:12px 16px;margin-bottom:14px}
@@ -810,18 +1092,36 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
 .image-card{background:#fff;border:1px solid #d7dde3;border-radius:10px;overflow:hidden}
 .image-card img{width:100%;height:230px;object-fit:cover;background:#111}
 .image-meta{padding:8px;font-size:12px;line-height:1.5}
+
+.admin-hint{color:#64748b;margin:8px 0 14px}
+.admin-files-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+.admin-file-card{background:linear-gradient(180deg,#fff,#f8fafc);border:1px solid #d8e2ee;border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:8px;cursor:default;transition:.18s}
+.admin-file-card:hover{transform:translateY(-2px);box-shadow:0 10px 20px #0b57d01a}
+.admin-file-card strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px}
+.admin-file-card small{color:#64748b;font-size:12px}
+.admin-card-icon{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:#e8f0fe;color:#0b57d0;font-size:20px}
+.admin-file-card.is-selected{outline:2px solid #0b57d0;background:#eaf1ff}
+.admin-selection-surface{position:relative}
+.admin-drag-selection-box{position:absolute;border:2px solid #7aa2ff;background:#7aa2ff44;border-radius:6px;pointer-events:none;z-index:6}
+.admin-selection-meta{background:#1f2937;color:#f8fafc;border-radius:10px;padding:8px 10px;margin-bottom:10px;font-size:13px}
+.admin-ctx-menu{position:fixed;z-index:1200;min-width:220px;background:#243248;color:#e5edf7;border:1px solid #3f536f;border-radius:12px;padding:6px;box-shadow:0 20px 40px #0006}
+.admin-ctx-menu button{width:100%;height:40px;border:0;background:transparent;color:inherit;border-radius:8px;display:flex;align-items:center;gap:10px;padding:0 10px;text-align:right}
+.admin-ctx-menu button:hover{background:#334760}
+.admin-ctx-menu i{width:18px;text-align:center}
+.admin-image-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+.admin-image-grid .image-card img{height:170px}
 @media(max-width:1300px){.image-grid{grid-template-columns:repeat(3,minmax(0,1fr));}.stat-grid{grid-template-columns:repeat(3,minmax(140px,1fr));}}
 @media(max-width:900px){.admin-shell{grid-template-columns:1fr}.two-col{grid-template-columns:1fr}.image-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.stat-grid{grid-template-columns:repeat(2,minmax(140px,1fr));}}
 </style>
 <div class="admin-shell">
   <aside class="admin-side">
     <h2>لوحة الإدارة</h2>
-    <a class="<?= $route==='admin'?'active':'' ?>" href="/admin">📊 الإحصائيات</a>
-    <a class="<?= $route==='admin_files'?'active':'' ?>" href="/admin/files">📁 إدارة الملفات</a>
-    <a class="<?= $route==='admin_images'?'active':'' ?>" href="/admin/images">🖼 مراجعة الصور</a>
-    <a class="<?= $route==='admin_settings'?'active':'' ?>" href="/admin/settings">⚙ الإعدادات</a>
-    <a href="/drive">↩ العودة للدرايف</a>
-    <a href="/logout">🚪 خروج</a>
+    <a class="<?= $route==='admin'?'active':'' ?>" href="/admin"><i class="fas fa-chart-line"></i> الإحصائيات</a>
+    <a class="<?= $route==='admin_files'?'active':'' ?>" href="/admin/files"><i class="fas fa-file-archive"></i> إدارة الملفات</a>
+    <a class="<?= $route==='admin_images'?'active':'' ?>" href="/admin/images"><i class="fas fa-images"></i> إدارة الصور</a>
+    <a class="<?= $route==='admin_settings'?'active':'' ?>" href="/admin/settings"><i class="fas fa-cog"></i> الإعدادات</a>
+    <a href="/files"><i class="fas fa-arrow-right"></i> العودة للملفات</a>
+    <a href="/logout"><i class="fas fa-sign-out-alt"></i> خروج</a>
   </aside>
   <main class="admin-main">
     <?php if ($flash): ?><div class="flash <?= $flash['type'] ?>" style="margin-bottom:10px"><?= htmlspecialchars($flash['msg']) ?></div><?php endif; ?>
@@ -878,65 +1178,53 @@ $usedPercent = min(100, round(($storage / USER_STORAGE_LIMIT) * 100, 2));
     <?php endif; ?>
 
     <?php if ($route === "admin_files"): ?>
-    <section class="panel" id="files" style="overflow:auto">
-      <h3>أحدث الملفات / إجراءات جماعية</h3>
-      <form method="post" id="adminBulkForm">
-        <input type="hidden" name="action" value="admin_bulk_files"><input type="hidden" name="redirect" value="/admin">
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-          <select name="bulk_op" id="bulkOp" required>
-            <option value="">اختر العملية</option>
-            <option value="trash">نقل إلى المهملات</option>
-            <option value="delete">حذف نهائي</option>
-            <option value="move">نقل إلى مجلد</option>
-            <option value="unshare">إلغاء المشاركة</option>
-          </select>
-          <select name="target_folder_id" id="targetFolderSelect">
-            <option value="">الجذر</option>
-            <?php foreach($adminFolders as $fd): ?>
-            <option value="<?= (int)$fd['id'] ?>">#<?= (int)$fd['id'] ?> - <?= htmlspecialchars($fd['name']) ?> (<?= htmlspecialchars($fd['user_id']) ?>)</option>
-            <?php endforeach; ?>
-          </select>
-          <button type="submit">تنفيذ</button>
-          <button type="button" onclick="document.querySelectorAll('.admin-file-check').forEach(c=>c.checked=true)">تحديد الكل</button>
-          <button type="button" onclick="document.querySelectorAll('.admin-file-check').forEach(c=>c.checked=false)">إلغاء التحديد</button>
-        </div>
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead><tr style="background:#f3f4f6"><th></th><th>المعرف</th><th>اسم الملف</th><th>الرافع</th><th>الدولة</th><th>الحجم</th><th>المشاركة</th><th>تاريخ الرفع</th></tr></thead>
-          <tbody>
+    <section class="panel" id="files">
+      <h3><i class="fas fa-file-archive"></i> إدارة الملفات (غير الصور)</h3>
+      <div class="admin-hint">يمكنك التحديد بالمؤشر، أو Ctrl/Cmd + نقرة، أو النقر بالزر الأيمن لإظهار الخيارات.</div>
+      <div id="adminSelectionMeta" class="admin-selection-meta hidden"></div>
+      <div id="adminSelectionSurface" class="admin-selection-surface">
+        <div id="adminDragSelectionBox" class="admin-drag-selection-box hidden" aria-hidden="true"></div>
+        <div id="adminFilesGrid" class="admin-files-grid">
           <?php foreach($adminFiles as $af): ?>
-            <tr>
-              <td><input class="admin-file-check" type="checkbox" name="file_ids[]" value="<?= (int)$af['id'] ?>"></td>
-              <td><?= (int)$af['id'] ?></td>
-              <td><?= htmlspecialchars($af['filename']) ?></td>
-              <td><?= htmlspecialchars($af['user_name'] ?: $af['user_id']) ?></td>
-              <td><?= htmlspecialchars((string)($af['uploader_country'] ?: 'ZZ')) ?></td>
-              <td><?= format_bytes((int)$af['size_bytes']) ?></td>
-              <td><?= $af['shared_token'] ? '✅' : '—' ?></td>
-              <td><?= htmlspecialchars((string)$af['created_at']) ?></td>
-            </tr>
+          <article class="admin-file-card" data-type="file" data-id="<?= (int)$af['id'] ?>" data-name="<?= htmlspecialchars($af['filename']) ?>" data-shared="<?= $af['shared_token'] ? '1':'0' ?>">
+            <div class="admin-card-icon"><i class="fas fa-file-archive"></i></div>
+            <strong title="<?= htmlspecialchars($af['filename']) ?>"><?= htmlspecialchars($af['filename']) ?></strong>
+            <small><i class="fas fa-hdd"></i> <?= format_bytes((int)$af['size_bytes']) ?> • #<?= (int)$af['id'] ?></small>
+            <small><i class="fas fa-user"></i> <?= htmlspecialchars($af['user_name'] ?: $af['user_id']) ?></small>
+          </article>
           <?php endforeach; ?>
-          </tbody>
-        </table>
-      </form>
+        </div>
+      </div>
     </section>
     <?php endif; ?>
 
     <?php if ($route === "admin_images"): ?>
     <section class="panel" id="images">
-      <h3>مراجعة الصور (5 بكل صف)</h3>
-      <div class="image-grid">
-        <?php foreach($adminImageFiles as $img): ?>
-          <div class="image-card">
-            <a href="<?= htmlspecialchars(file_url($img)) ?>" target="_blank"><img src="/<?= htmlspecialchars($img['relative_path']) ?>" alt="<?= htmlspecialchars($img['filename']) ?>"></a>
-            <div class="image-meta">
-              <div><strong><?= htmlspecialchars($img['filename']) ?></strong></div>
-              <div><?= htmlspecialchars($img['user_name'] ?: $img['user_id']) ?> · <?= format_bytes((int)$img['size_bytes']) ?></div>
-            </div>
-          </div>
-        <?php endforeach; ?>
+      <h3><i class="fas fa-image"></i> إدارة الصور</h3>
+      <div class="admin-hint">عرض شبكي كامل مع تحديد سريع ونقر أيمن لخيارات الإدارة.</div>
+      <div id="adminSelectionMeta" class="admin-selection-meta hidden"></div>
+      <div id="adminSelectionSurface" class="admin-selection-surface">
+        <div id="adminDragSelectionBox" class="admin-drag-selection-box hidden" aria-hidden="true"></div>
+        <div class="image-grid admin-image-grid">
+          <?php foreach($adminImageFiles as $img): ?>
+            <article class="image-card admin-file-card" data-type="file" data-id="<?= (int)$img['id'] ?>" data-name="<?= htmlspecialchars($img['filename']) ?>" data-shared="<?= $img['shared_token'] ? '1':'0' ?>">
+              <img src="/<?= htmlspecialchars($img['relative_path']) ?>" alt="<?= htmlspecialchars($img['filename']) ?>">
+              <div class="image-meta">
+                <div><strong><?= htmlspecialchars($img['filename']) ?></strong></div>
+                <div><?= htmlspecialchars($img['user_name'] ?: $img['user_id']) ?> · <?= format_bytes((int)$img['size_bytes']) ?></div>
+              </div>
+            </article>
+          <?php endforeach; ?>
+        </div>
       </div>
     </section>
     <?php endif; ?>
+  <div id="adminCtxMenu" class="admin-ctx-menu hidden">
+    <button type="button" data-admin-cmd="trash"><i class="fas fa-trash"></i><span>نقل إلى المهملات</span></button>
+    <button type="button" data-admin-cmd="delete"><i class="fas fa-trash-alt"></i><span>حذف نهائي</span></button>
+    <button type="button" data-admin-cmd="move"><i class="fas fa-folder-open"></i><span>نقل إلى مجلد...</span></button>
+    <button type="button" data-admin-cmd="unshare"><i class="fas fa-link-slash"></i><span>إلغاء المشاركة</span></button>
+  </div>
   </main>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -953,6 +1241,127 @@ if(bulkOp&&folderSel){
   const sync=()=>{folderSel.style.display=(bulkOp.value==='move')?'inline-block':'none';};
   bulkOp.addEventListener('change',sync);sync();
 }
+
+const adminCtxMenu=document.getElementById('adminCtxMenu');
+if(adminCtxMenu){ document.addEventListener('contextmenu',(e)=>e.preventDefault()); }
+const adminSelectionSurface=document.getElementById('adminSelectionSurface');
+const adminDragSelectionBox=document.getElementById('adminDragSelectionBox');
+const adminSelectionMeta=document.getElementById('adminSelectionMeta');
+const adminCards=[...document.querySelectorAll('#adminSelectionSurface .admin-file-card[data-id]')];
+let adminSelected=[];
+let adminDragState=null;
+let adminSuppressClear=false;
+
+function setAdminSelected(items){
+  adminCards.forEach(c=>c.classList.remove('is-selected'));
+  adminSelected=[...new Set(items)].filter(Boolean);
+  adminSelected.forEach(c=>c.classList.add('is-selected'));
+  if(!adminSelectionMeta) return;
+  if(!adminSelected.length){ adminSelectionMeta.classList.add('hidden'); adminSelectionMeta.textContent=''; return; }
+  adminSelectionMeta.classList.remove('hidden');
+  adminSelectionMeta.textContent=`تم تحديد ${adminSelected.length} عنصر`;
+}
+
+function openAdminMenu(e, card){
+  e.preventDefault();
+  if(!adminSelected.includes(card)) setAdminSelected([card]);
+  if(!adminCtxMenu) return;
+  const w=240,h=210,p=8;
+  adminCtxMenu.style.left=Math.min(e.clientX, window.innerWidth-w-p)+'px';
+  adminCtxMenu.style.top=Math.min(e.clientY, window.innerHeight-h-p)+'px';
+  adminCtxMenu.classList.remove('hidden');
+}
+
+async function adminBulkAction(op, ids, targetFolder=''){
+  const fd=new FormData();
+  fd.append('action','admin_bulk_files');
+  fd.append('bulk_op', op);
+  fd.append('target_folder_id', targetFolder);
+  fd.append('redirect', window.location.pathname);
+  ids.forEach(id=>fd.append('file_ids[]', String(id)));
+  const r=await fetch(window.location.pathname,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd});
+  const j=await r.json();
+  if(!r.ok || !j.ok) throw new Error(j.message||'فشلت العملية');
+  return j;
+}
+
+adminCards.forEach(card=>{
+  card.addEventListener('click',(e)=>{
+    if(e.metaKey||e.ctrlKey){
+      const next=adminSelected.includes(card)?adminSelected.filter(x=>x!==card):[...adminSelected, card];
+      setAdminSelected(next);
+    }else{
+      setAdminSelected([card]);
+    }
+  });
+  card.addEventListener('contextmenu',(e)=>openAdminMenu(e,card));
+});
+
+function rectFrom(a,b){return {left:Math.min(a.x,b.x),top:Math.min(a.y,b.y),width:Math.abs(a.x-b.x),height:Math.abs(a.y-b.y)}}
+function hit(r1,r2){return !(r2.left>r1.left+r1.width || r2.left+r2.width<r1.left || r2.top>r1.top+r1.height || r2.top+r2.height<r1.top)}
+adminSelectionSurface?.addEventListener('mousedown',(e)=>{
+  if(e.button!==0) return;
+  if(e.target.closest('.admin-file-card,.admin-ctx-menu,button,input,select,textarea,a,form')) return;
+  const sr=adminSelectionSurface.getBoundingClientRect();
+  adminDragState={start:{x:e.clientX,y:e.clientY},sr,dragged:false};
+  adminDragSelectionBox?.classList.remove('hidden');
+  if(adminDragSelectionBox){
+    adminDragSelectionBox.style.left=(e.clientX-sr.left+adminSelectionSurface.scrollLeft)+'px';
+    adminDragSelectionBox.style.top=(e.clientY-sr.top+adminSelectionSurface.scrollTop)+'px';
+    adminDragSelectionBox.style.width='0px';
+    adminDragSelectionBox.style.height='0px';
+  }
+  setAdminSelected([]);
+  e.preventDefault();
+});
+
+document.addEventListener('mousemove',(e)=>{
+  if(!adminDragState || !adminSelectionSurface || !adminDragSelectionBox) return;
+  const r=rectFrom(adminDragState.start,{x:e.clientX,y:e.clientY});
+  if(r.width>3||r.height>3) adminDragState.dragged=true;
+  adminDragSelectionBox.style.left=(r.left-adminDragState.sr.left+adminSelectionSurface.scrollLeft)+'px';
+  adminDragSelectionBox.style.top=(r.top-adminDragState.sr.top+adminSelectionSurface.scrollTop)+'px';
+  adminDragSelectionBox.style.width=r.width+'px';
+  adminDragSelectionBox.style.height=r.height+'px';
+  const touched=[];
+  adminCards.forEach(c=>{const rc=c.getBoundingClientRect(); if(hit(r,{left:rc.left,top:rc.top,width:rc.width,height:rc.height})) touched.push(c);});
+  setAdminSelected(touched);
+});
+
+document.addEventListener('mouseup',()=>{
+  if(!adminDragState || !adminDragSelectionBox) return;
+  adminDragSelectionBox.classList.add('hidden');
+  adminSuppressClear=!!adminDragState.dragged;
+  adminDragState=null;
+});
+
+adminCtxMenu?.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',async()=>{
+  const cmd=btn.dataset.adminCmd;
+  if(!adminSelected.length) return;
+  const ids=adminSelected.map(c=>Number(c.dataset.id)).filter(Boolean);
+  let target='';
+  if(cmd==='move'){
+    const answer=prompt('أدخل رقم المجلد الهدف (اتركه فارغاً للنقل إلى الجذر):','');
+    if(answer===null) return;
+    target=answer;
+  }
+  try{
+    await adminBulkAction(cmd, ids, target.trim());
+    if(cmd==='trash' || cmd==='delete' || cmd==='move') adminSelected.forEach(c=>c.remove());
+    if(cmd==='unshare') adminSelected.forEach(c=>c.dataset.shared='0');
+    setAdminSelected(adminSelected.filter(c=>document.body.contains(c)));
+  }catch(err){
+    alert(err.message||'فشلت العملية');
+  }finally{
+    adminCtxMenu.classList.add('hidden');
+  }
+}));
+
+document.addEventListener('click',(e)=>{
+  if(adminSuppressClear){adminSuppressClear=false;return;}
+  if(!e.target.closest('.admin-file-card,.admin-ctx-menu')) setAdminSelected([]);
+  if(!e.target.closest('.admin-ctx-menu')) adminCtxMenu?.classList.add('hidden');
+});
 
 if (window.Chart) {
   const ctx = document.getElementById('uploadsByMonthChart');
@@ -989,106 +1398,127 @@ function drawRegionsMap() {
 </script>
 <?php else: ?>
 <header class="topbar">
-  <div class="brand"><span class="menu">☰</span><img src="/public/google-logo.png" alt=""/><span>درايف</span></div>
+  <div class="brand"><img src="/public/game-zone-logo.svg" alt="GAME ZONE"/><span>درايف</span></div>
   <form class="search" method="get" action="/search"><input name="q" placeholder="ابحث في درايف" value="<?= htmlspecialchars($search) ?>"/></form>
-  <div class="header-icons"><span>?</span><span>⚙</span></div>
   <div class="profile"><img width="38" height="38" src="<?= htmlspecialchars($user['avatar'] ?: '/public/myimg.png') ?>" alt="avatar"/><span><?= htmlspecialchars($user['name']) ?></span><a class="header-logout" href="/logout">خروج</a></div>
 </header>
 
 <div class="layout">
-  <aside class="sidebar">
+  <aside class="sidebar modern-sidebar">
     <div class="new-wrap">
-      <button id="newBtn" class="new-btn" type="button">＋ جديد</button>
+      <button id="newBtn" class="new-btn" type="button"><i class="fas fa-plus"></i> جديد</button>
       <div id="newMenu" class="new-menu hidden">
-        <button type="button" data-open="uploadModal">📄 تحميل ملف</button>
-        <button type="button" data-open="uploadFolderModal">📁 تحميل مجلد</button>
-        <button type="button" data-open="folderModal">📁 مجلد جديد</button>
+        <button type="button" data-open="uploadFiles"><i class="far fa-file"></i> تحميل ملف</button>
+        <button type="button" data-open="uploadFolders"><i class="far fa-folder"></i> تحميل مجلد</button>
+        <button type="button" data-open="folderModal"><i class="fas fa-folder-plus"></i> مجلد جديد</button>
       </div>
     </div>
 
-    <nav>
-      <a href="/drive" class="<?= $route==='drive'?'active':'' ?>">📁 ملفاتي</a>
-      <a href="/recent" class="<?= $route==='recent'?'active':'' ?>">🕒 الأحدث</a>
-      <a href="/starred" class="<?= $route==='starred'?'active':'' ?>">⭐ المميزة</a>
-      <a href="/trash" class="<?= $route==='trash'?'active':'' ?>">🗑 سلة المحذوفات</a>
-      <hr>
-      <a href="#" onclick="alert('الدعم قريباً');return false;">❓ المساعدة</a>
-      <a href="#" onclick="return false;">☁️ التخزين</a>
+    <nav class="sidebar-nav">
+      <a href="/home" class="<?= $route==='home'?'active':'' ?>"><i class="fas fa-house"></i><span>الرئيسية</span></a>
+      <a href="/files" class="<?= $route==='files'?'active':'' ?>"><i class="far fa-folder-open"></i><span>ملفاتي</span></a>
+      <a href="/trash" class="<?= $route==='trash'?'active':'' ?>"><i class="far fa-trash-alt"></i><span>سلة المحذوفات</span></a>
+      <a href="#" onclick="return false;"><i class="fas fa-hdd"></i><span>التخزين</span></a>
     </nav>
 
     <div class="storage-card">
       <div class="storage-bar"><span style="width: <?= $usedPercent ?>%"></span></div>
       <p>تم استخدام <?= format_bytes($storage) ?> من إجمالي 1 تيرابايت</p>
-      <button type="button">الحصول على مساحة تخزين إضافية</button>
     </div>
 
-    <a class="logout" href="/logout">خروج</a>
+    <div id="uploadProgress" class="progress hidden"><div id="uploadProgressBar"></div><p id="uploadProgressText">0%</p><p id="uploadSpeedText">0 م.ب/ث</p></div>
+
+    <div id="selectionBar" class="selection-bar hidden sidebar-selection-bar">
+      <div class="selection-count"><span id="selectionCount">0</span> عنصر محدد</div>
+      <div class="selection-actions">
+        <button type="button" data-select-cmd="download"><i class="fas fa-download"></i><span>تنزيل</span></button>
+        <button type="button" data-select-cmd="rename"><i class="fas fa-pen"></i><span>إعادة تسمية</span></button>
+        <button type="button" data-select-cmd="share"><i class="fas fa-share-alt"></i><span>مشاركة</span></button>
+        <button type="button" data-select-cmd="move"><i class="fas fa-folder-open"></i><span>نقل</span></button>
+        <button type="button" data-select-cmd="copy"><i class="fas fa-link"></i><span>نسخ الرابط</span></button>
+        <button type="button" data-select-cmd="delete"><i class="fas fa-trash-alt"></i><span>نقل للمهملات</span></button>
+      </div>
+      <div id="selectionMeta" class="selection-meta"></div>
+    </div>
+
+
+    <a class="logout" href="/logout"><i class="fas fa-sign-out-alt"></i> خروج</a>
   </aside>
 
   <main class="content">
     <?php if ($dbError): ?><div class="flash error">خطأ قاعدة البيانات: <?= htmlspecialchars($dbError) ?></div><?php endif; ?>
     <?php if ($flash): ?><div class="flash <?= $flash['type'] ?>"><?= htmlspecialchars($flash['msg']) ?></div><?php endif; ?>
 
-    <div id="uploadProgress" class="progress hidden"><div id="uploadProgressBar"></div><p id="uploadProgressText">0%</p><p id="uploadSpeedText">0 م.ب/ث</p></div>
+    <input id="quickFileInput" type="file" multiple class="hidden" />
+    <input id="quickFolderInput" type="file" webkitdirectory directory multiple class="hidden" />
+    <div id="dropUploadOverlay" class="drop-upload-overlay hidden"><div class="drop-upload-box">أفلت الملفات هنا لرفعها مباشرة</div></div>
 
-    <div class="section-head"><h2><?= htmlspecialchars($pageTitle) ?></h2><div>☰ ⓘ</div></div>
-    <div id="selectionBar" class="selection-bar hidden">
-      <div class="selection-count"><span id="selectionCount">0</span> تم اختيار ملف</div>
-      <div class="selection-actions">
-        <button type="button" data-select-cmd="download">⤓ تنزيل</button>
-        <button type="button" data-select-cmd="rename">✎ إعادة تسمية</button>
-        <button type="button" data-select-cmd="share">👥 مشاركة</button>
-        <button type="button" data-select-cmd="copy">🔗 نسخ الرابط</button>
-        <button type="button" data-select-cmd="delete">🗑 نقل للمهملات</button>
+    <div class="section-head"><h2><?= htmlspecialchars($pageTitle) ?></h2><?php if ($route==='trash'): ?><button type="button" id="emptyTrashBtn" class="danger-btn"><i class="fas fa-trash"></i> حذف نهائي لكل الملفات</button><?php endif; ?></div>
+
+    <div id="selectionSurface" class="selection-surface">
+    <?php if ($route === 'home'): ?>
+    <?php if ($sharedFolders): ?>
+    <div class="folders-grid">
+      <?php foreach ($sharedFolders as $sf): ?>
+      <div class="folder-card" onclick="location.href='/home?sfolder=<?= (int)$sf['folder_id'] ?>'" style="cursor:pointer">
+        <div class="folder-placeholder"><i class="fas fa-folder"></i></div>
+        <strong><?= htmlspecialchars($sf['folder_name']) ?></strong>
       </div>
+      <?php endforeach; ?>
     </div>
+    <?php endif; ?>
 
-    <h4 class="recent-title">الأحدث</h4>
-
+    <div class="files-grid" id="filesGrid">
+      <?php if (!$sharedFiles): ?><div class="empty">لا توجد ملفات مشتركة حالياً.</div><?php endif; ?>
+      <?php foreach ($sharedFiles as $f): ?>
+      <?php $surl = share_url((string)$f['shared_token'], (string)$f['filename']); ?>
+      <div class="file-grid-card folder-card home-shared-card" data-share-url="<?= htmlspecialchars($surl) ?>" data-download-url="<?= htmlspecialchars($surl) ?>?download=1" data-name="<?= htmlspecialchars((string)$f['filename']) ?>">
+        <div class="file-grid-thumb-link">
+          <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars($surl) ?>" alt="thumb" />
+          <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
+        </div>
+        <strong><?= htmlspecialchars($f['filename']) ?></strong>
+        <small>تمت المشاركة بواسطة <?= htmlspecialchars((string)$f['user_name']) ?></small>
+      </div>
+      <?php endforeach; ?>
+    </div>
+    <?php else: ?>
     <div class="folders-grid">
       <?php foreach ($folders as $fd): ?>
-      <a href="/folders/<?= (int)$fd['id'] ?>" class="folder-card" data-type="folder" data-id="<?= (int)$fd['id'] ?>" data-name="<?= htmlspecialchars($fd['name']) ?>">
+      <div class="folder-card" data-type="folder" data-id="<?= (int)$fd['id'] ?>" data-name="<?= htmlspecialchars($fd['name']) ?>" data-home-shared="<?= !empty($fd['home_shared']) ? '1':'0' ?>" data-href="/folders/<?= (int)$fd['id'] ?>">
         <?php if (!empty($fd['preview_image'])): ?><img src="/<?= htmlspecialchars($fd['preview_image']) ?>" alt="preview" />
         <?php else: ?><div class="folder-placeholder">📁</div><?php endif; ?>
         <strong><?= htmlspecialchars($fd['name']) ?></strong>
-      </a>
-      <?php endforeach; ?>
-
-      <?php foreach (array_slice($files, 0, 4) as $f): ?>
-      <a href="<?= htmlspecialchars(file_url($f)) ?>" target="_blank" class="folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
-        <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" />
-        <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
-        <strong><?= htmlspecialchars($f['filename']) ?></strong>
-      </a>
-      <?php endforeach; ?>
-    </div>
-    <div class="files-grid">
-      <?php if (!$files): ?><div class="empty">لا توجد ملفات.</div><?php endif; ?>
-      <?php foreach ($files as $f): ?>
-      <div class="file-grid-card folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
-        <a href="<?= htmlspecialchars(file_url($f)) ?>" target="_blank" class="file-grid-thumb-link">
-          <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" />
-          <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
-        </a>
-        <strong><?= htmlspecialchars($f['filename']) ?></strong>
-        <small><?= format_bytes((int)$f['size_bytes']) ?> • <?= htmlspecialchars((string)$f['created_at']) ?></small>
       </div>
       <?php endforeach; ?>
+
+    </div>
+    <div class="files-grid" id="filesGrid">
+      <?php if (!$files): ?><div class="empty">لا توجد ملفات.</div><?php endif; ?>
+      <?php foreach ($files as $f): ?>
+      <div class="file-grid-card folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-file-url="<?= htmlspecialchars(file_url($f)) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-home-shared="<?= !empty($f['home_shared']) ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
+        <div class="file-grid-thumb-link">
+          <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" />
+          <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
+        </div>
+        <strong><?= htmlspecialchars($f['filename']) ?></strong>
+      </div>
+      <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+    <div id="filesInfiniteLoader" class="files-infinite-loader hidden" aria-live="polite">
+      <div class="files-spinner" role="progressbar" aria-label="circular progressbar, single color"></div>
+      <span>جاري تحميل المزيد...</span>
+    </div>
+    <div id="dragSelectionBox" class="drag-selection-box hidden" aria-hidden="true"></div>
     </div>
   </main>
 </div>
 
-<div id="uploadModal" class="modal hidden"><div class="modal-box"><button class="close" data-close>×</button><h3>اختر ملفاً لرفعه</h3>
-  <form id="uploadForm" method="post" enctype="multipart/form-data">
-    <input type="hidden" name="action" value="upload_ajax"/><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"/><input type="hidden" name="folder_id" value="<?= $route==='folder'?(int)$currentFolderId:'' ?>"/>
-    <input id="singleFile" type="file" name="file" required>
-    <small>الحد الأقصى للملف الواحد: 5 جيجابايت</small>
-    <button type="submit">رفع الملف</button>
-  </form></div></div>
 
 <div id="uploadFolderModal" class="modal hidden"><div class="modal-box"><button class="close" data-close>×</button><h3>اختر مجلداً لرفعه</h3>
   <form method="post" enctype="multipart/form-data">
-    <input type="hidden" name="action" value="upload_folder"/><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"/><input type="hidden" name="folder_id" value="<?= $route==='folder'?(int)$currentFolderId:'' ?>"/>
+    <input type="hidden" name="action" value="upload_folder"/><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/files') ?>"/><input type="hidden" name="folder_id" value="<?= $route==='folder'?(int)$currentFolderId:'' ?>"/>
     <input type="file" id="folderInput" name="files[]" webkitdirectory directory multiple required>
     <div id="relativePathsContainer"></div>
     <button type="submit">تحميل المجلد</button>
@@ -1096,35 +1526,81 @@ function drawRegionsMap() {
 
 <div id="folderModal" class="modal hidden"><div class="modal-box"><button class="close" data-close>×</button><h3>إنشاء مجلد جديد</h3>
   <form method="post">
-    <input type="hidden" name="action" value="create_folder"/><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"/><input type="hidden" name="folder_id" value="<?= $route==='folder'?(int)$currentFolderId:'' ?>"/>
+    <input type="hidden" name="action" value="create_folder"/><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/files') ?>"/><input type="hidden" name="folder_id" value="<?= $route==='folder'?(int)$currentFolderId:'' ?>"/>
     <input name="folder_name" placeholder="اسم المجلد" required>
     <button type="submit">إنشاء</button>
   </form></div></div>
 
-<div id="shareModal" class="modal hidden"><div class="modal-box share-modal-box"><button class="close" data-close>×</button>
-  <h3 id="shareTitle">مشاركة ملف</h3>
-  <input id="sharePeopleInput" placeholder="إضافة مستخدمين ومجموعات ومساحات وأحداث في التقويم" />
-  <div class="share-access-row"><span>وصول عام</span><select id="shareAccessSelect"><option value="public">أي شخص لديه الرابط</option><option value="private">حصري</option></select></div>
-  <div class="share-note" id="shareNote">يمكن لأي شخص لديه الرابط الوصول في ظل الحصر.</div>
-  <div class="share-actions"><button type="button" id="shareDoneBtn">تم</button><button type="button" id="shareCopyBtn">نسخ الرابط</button></div>
+
+<div id="moveModal" class="modal hidden"><div class="modal-box move-modal-box"><button class="close" data-close>×</button>
+  <h3 id="moveModalTitle"><i class="fas fa-folder-open"></i> نقل العناصر المحددة</h3>
+  <p class="move-current">اختر المجلد الهدف:</p>
+  <input id="moveSearchInput" placeholder="ابحث عن مجلد..." />
+  <div id="moveFolderList" class="move-folder-list">
+    <button type="button" class="move-folder-item" data-folder-id=""><i class="far fa-hdd"></i><span>ملفاتي (الجذر)</span></button>
+    <?php foreach ($allFolders as $af): ?>
+      <button type="button" class="move-folder-item" data-folder-id="<?= (int)$af['id'] ?>"><i class="far fa-folder"></i><span><?= htmlspecialchars($af['name']) ?></span></button>
+    <?php endforeach; ?>
+  </div>
+  <div class="move-actions"><button type="button" id="moveCancelBtn"><i class="fas fa-times"></i> إلغاء</button><button type="button" id="moveConfirmBtn" disabled><i class="fas fa-check"></i> نقل</button></div>
 </div></div>
 
-<div id="ctxMenu" class="ctx-menu hidden">
-  <button data-cmd="open"><span>فتح باستخدام</span><b>✦</b></button>
-  <button data-cmd="download"><span>تنزيل</span><b>⤓</b></button>
-  <button data-cmd="rename"><span>إعادة تسمية</span><b>✎</b></button>
-  <button data-cmd="copy"><span>إنشاء نسخة / نسخ الرابط</span><b>⧉</b></button>
+<div id="renameModal" class="modal hidden"><div class="modal-box rename-modal-box"><button class="close" data-close>×</button>
+  <h3><i class="far fa-edit"></i> إعادة تسمية</h3>
+  <p class="rename-current" id="renameCurrentLabel">العنصر المحدد</p>
+  <input id="renameInput" placeholder="الاسم الجديد" />
+  <div class="rename-actions"><button type="button" id="renameCancelBtn"><i class="fas fa-times"></i> إلغاء</button><button type="button" id="renameSaveBtn"><i class="fas fa-check"></i> حفظ</button></div>
+</div></div>
+
+<div id="shareModal" class="modal hidden"><div class="modal-box ShareDialog"><button class="close" data-close>×</button>
+  <h1 class="ShareDialog-title">مشاركة الملف</h1>
+  <div class="ShareDialog-itemInfo"><b id="shareFileName">-</b> (<span id="shareFileSize">-</span>)</div>
+  <div class="ShareDialog-copyrightMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف لأنه محمي بحقوق النشر.</div>
+  <div class="ShareDialog-dmcaMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف بسبب مطالبة DMCA.</div>
+  <div class="ShareDialog-virusMessage hidden"><b>مقيّد</b> - لا يمكن مشاركة هذا الملف لأنه يحتوي على فيروس.</div>
+  <div class="ShareDialog-homeToggle"><label for="shareHomeToggle">إظهار في الصفحة الرئيسية للمنتدى</label><input id="shareHomeToggle" class="ShareDialog-switch" type="checkbox" role="switch" aria-label="إظهار في الصفحة الرئيسية للمنتدى"></div>
+  <div class="ShareDialog-links">
+    <div class="ShareDialog-inputGroup" role="group" aria-labelledby="share-link-label">
+      <label for="share-link-input" id="share-link-label" class="hidden">رابط المشاركة</label>
+      <input id="share-link-input" class="ShareDialog-linkInput" type="text" value="" readonly="readonly">
+      <button type="button" class="copy-link ShareDialog-copyBtn" id="shareCopyBtn"><i class="fas fa-link" aria-hidden="true"></i>نسخ الرابط</button>
+    </div>
+    <div class="ShareDialog-socialLinks" role="group" aria-label="روابط اجتماعية">
+      <a href="#" target="_blank" rel="noopener" id="shareFacebook" class="ShareDialog-social ShareDialog-facebook"><span class="ShareDialog-socialIcon"><i class="fab fa-facebook-f" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">فيسبوك</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareX" class="ShareDialog-social ShareDialog-x"><span class="ShareDialog-socialIcon"><i class="fa-brands fa-x-twitter" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">X</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareEmail" class="ShareDialog-social ShareDialog-email"><span class="ShareDialog-socialIcon"><i class="fas fa-envelope" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">البريد</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareReddit" class="ShareDialog-social ShareDialog-reddit"><span class="ShareDialog-socialIcon"><i class="fab fa-reddit-alien" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">ريديت</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareBlogger" class="ShareDialog-social ShareDialog-blogger"><span class="ShareDialog-socialIcon"><i class="fab fa-blogger-b" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">بلوجر</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareLinkedin" class="ShareDialog-social ShareDialog-linkedin"><span class="ShareDialog-socialIcon"><i class="fab fa-linkedin-in" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">لينكدإن</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareWhatsapp" class="ShareDialog-social ShareDialog-whatsapp"><span class="ShareDialog-socialIcon"><i class="fab fa-whatsapp" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">واتساب</span></a>
+      <a href="#" target="_blank" rel="noopener" id="shareTelegram" class="ShareDialog-social ShareDialog-telegram"><span class="ShareDialog-socialIcon"><i class="fab fa-telegram-plane" aria-hidden="true"></i></span><span class="ShareDialog-socialLabel">تلغرام</span></a>
+    </div>
+  </div>
+</div></div>
+
+<div id="ctxMenu" class="ctx-menu hidden modern-left-menu">
+  <button data-cmd="share"><i class="fas fa-share-alt" aria-hidden="true"></i><span>مشاركة</span></button>
+  <button data-cmd="copy"><i class="fas fa-link" aria-hidden="true"></i><span>نسخ الرابط</span></button>
+  <button data-cmd="download"><i class="fas fa-download" aria-hidden="true"></i><span>تنزيل</span></button>
   <hr>
-  <button data-cmd="share"><span>مشاركة</span><b>👥</b></button>
-  <button data-cmd="move"><span>تنظيم</span><b>🗂</b></button>
-  <button data-cmd="info"><span>معلومات الملف</span><b>ⓘ</b></button>
+  <button data-cmd="move"><i class="far fa-folder-open" aria-hidden="true"></i><span>نقل إلى...</span></button>
+  <button data-cmd="rename"><i class="far fa-edit" aria-hidden="true"></i><span>إعادة تسمية</span></button>
+  <button data-cmd="password"><i class="fas fa-lock" aria-hidden="true"></i><span>حماية بكلمة مرور</span></button>
   <hr>
-  <button data-cmd="delete"><span>إزالة</span><b>🗑</b></button>
+  <button data-cmd="delete"><i class="far fa-trash-alt" aria-hidden="true"></i><span>نقل إلى سلة المهملات</span></button>
 </div>
 
+<div id="homeCtxMenu" class="ctx-menu hidden modern-left-menu">
+  <button data-home-cmd="copy"><i class="fas fa-link" aria-hidden="true"></i><span>نسخ الرابط</span></button>
+  <button data-home-cmd="download"><i class="fas fa-download" aria-hidden="true"></i><span>تنزيل</span></button>
+</div>
+
+
 <form id="cmdForm" method="post" class="hidden">
-  <input type="hidden" name="action" id="cmdAction"><input type="hidden" name="id" id="cmdId"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/drive') ?>"><input type="hidden" name="new_name" id="cmdName">
+  <input type="hidden" name="action" id="cmdAction"><input type="hidden" name="id" id="cmdId"><input type="hidden" name="redirect" value="<?= htmlspecialchars($uri ?: '/files') ?>"><input type="hidden" name="new_name" id="cmdName">
 </form>
+
+<div id="toastRoot" class="toast-root" aria-live="polite" aria-atomic="true"></div>
 
 <script>
 const MAX_FILE = 5 * 1024 * 1024 * 1024;
@@ -1133,6 +1609,16 @@ const newMenu=document.getElementById('newMenu');
 if(newBtn && newMenu){
   newBtn.addEventListener('click',(e)=>{e.stopPropagation();newMenu.classList.toggle('hidden');});
   document.querySelectorAll('[data-open]').forEach(el=>el.addEventListener('click',()=>{
+    if(el.dataset.open==='uploadFiles'){
+      quickFileInput?.click();
+      newMenu.classList.add('hidden');
+      return;
+    }
+    if(el.dataset.open==='uploadFolders'){
+      quickFolderInput?.click();
+      newMenu.classList.add('hidden');
+      return;
+    }
     const target=document.getElementById(el.dataset.open);
     if(target) target.classList.remove('hidden');
     newMenu.classList.add('hidden');
@@ -1141,7 +1627,39 @@ if(newBtn && newMenu){
 }
 document.querySelectorAll('[data-close]').forEach(el=>el.addEventListener('click',()=>el.closest('.modal').classList.add('hidden')));
 window.addEventListener('click',(e)=>{if(e.target.classList.contains('modal')) e.target.classList.add('hidden');});
-window.addEventListener('keydown',(e)=>{if(e.key==='Escape'){document.querySelectorAll('.modal').forEach(m=>m.classList.add('hidden'));if(newMenu)newMenu.classList.add('hidden');ctxMenu.classList.add('hidden');}});
+window.addEventListener('keydown',(e)=>{if(e.key==='Escape'){document.querySelectorAll('.modal').forEach(m=>m.classList.add('hidden'));if(newMenu)newMenu.classList.add('hidden');ctxMenu.classList.add('hidden'); if(homeCtxMenu) homeCtxMenu.classList.add('hidden');}});
+
+// منع قائمة المتصفح الافتراضية للنقر بالزر الأيمن لإظهار تجربة قائمة موحّدة داخل التطبيق
+document.addEventListener('contextmenu',(e)=>{
+  e.preventDefault();
+});
+
+window.addEventListener('keydown',(e)=>{
+  const isSelectAll=(e.ctrlKey||e.metaKey) && (e.key==='a' || e.key==='A');
+  if(!isSelectAll) return;
+  const tag=(e.target?.tagName||'').toLowerCase();
+  const editable=e.target?.isContentEditable || ['input','textarea','select'].includes(tag);
+  if(editable) return;
+  const visibleItems=[...document.querySelectorAll('#selectionSurface [data-type]')].filter(el=>!el.classList.contains('lazy-hidden'));
+  if(!visibleItems.length) return;
+  e.preventDefault();
+  setSelected(visibleItems);
+  showToast(`تم تحديد ${visibleItems.length} عنصراً في الصفحة الحالية`,'info');
+});
+
+window.addEventListener('keydown', async (e)=>{
+  if(e.key!=='Delete') return;
+  const tag=(e.target?.tagName||'').toLowerCase();
+  const editable=e.target?.isContentEditable || ['input','textarea','select'].includes(tag);
+  if(editable) return;
+  if(!selectedItems.length) return;
+  e.preventDefault();
+  for(const el of [...selectedItems]){
+    await submitCmd('delete', el);
+  }
+  showToast('تم نقل العناصر المحددة إلى سلة المهملات','success');
+  setSelected([]);
+});
 
 const folderInput = document.getElementById('folderInput');
 const relContainer = document.getElementById('relativePathsContainer');
@@ -1156,80 +1674,292 @@ folderInput?.addEventListener('change', ()=>{
   });
 });
 
-const uploadForm = document.getElementById('uploadForm');
-const singleFile = document.getElementById('singleFile');
+const quickFileInput = document.getElementById('quickFileInput');
+const quickFolderInput = document.getElementById('quickFolderInput');
+const dropUploadOverlay = document.getElementById('dropUploadOverlay');
 const pWrap = document.getElementById('uploadProgress');
 const pBar = document.getElementById('uploadProgressBar');
 const pText = document.getElementById('uploadProgressText');
 const pSpeed = document.getElementById('uploadSpeedText');
-uploadForm?.addEventListener('submit',(e)=>{
-  e.preventDefault();
-  if(!singleFile.files.length) return;
-  const f=singleFile.files[0];
-  if(f.size>MAX_FILE){ alert('الملف أكبر من 5 جيجابايت.'); return; }
+const activeFolderId = <?= $route==='folder' ? (int)$currentFolderId : 'null' ?>;
+const UPLOAD_ENDPOINT = '/files';
+let uploadInProgress = false;
 
-  document.getElementById('uploadModal')?.classList.add('hidden');
+
+const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB
+const CHUNK_CONCURRENCY = 4;
+const FILE_CONCURRENCY = 2;
+
+function generateUploadId(){
+  return 'up_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10);
+}
+
+async function postChunk(uploadId, file, chunkIndex, totalChunks){
+  const start=chunkIndex*CHUNK_SIZE;
+  const end=Math.min(start+CHUNK_SIZE, file.size);
+  const blob=file.slice(start,end);
+  const fd=new FormData();
+  fd.append('action','upload_chunk');
+  fd.append('upload_id', uploadId);
+  fd.append('chunk_index', String(chunkIndex));
+  fd.append('total_chunks', String(totalChunks));
+  fd.append('chunk', blob, file.name+`.part${chunkIndex}`);
+  const r=await fetch(UPLOAD_ENDPOINT,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd});
+  const j=await r.json().catch(()=>({ok:false,message:'فشل رفع جزء من الملف'}));
+  if(!r.ok || !j.ok) throw new Error(j.message||'فشل رفع جزء من الملف');
+  return blob.size;
+}
+
+async function finalizeChunkUpload(uploadId, file, relativePath=''){
+  const totalChunks=Math.max(1, Math.ceil(file.size/CHUNK_SIZE));
+  const fd=new FormData();
+  fd.append('action','complete_chunk_upload');
+  fd.append('upload_id', uploadId);
+  fd.append('total_chunks', String(totalChunks));
+  fd.append('name', file.name);
+  fd.append('size', String(file.size));
+  fd.append('relative_path', relativePath||'');
+  fd.append('folder_id', activeFolderId==null ? '' : String(activeFolderId));
+  const r=await fetch(UPLOAD_ENDPOINT,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd});
+  const j=await r.json().catch(()=>({ok:false,message:'فشل إنهاء رفع الملف'}));
+  if(!r.ok || !j.ok) throw new Error(j.message||'فشل إنهاء رفع الملف');
+}
+
+async function uploadFileInParallel(file, relativePath, onProgress){
+  const totalChunks=Math.max(1, Math.ceil(file.size/CHUNK_SIZE));
+  const uploadId=generateUploadId();
+  let nextIndex=0;
+  async function worker(){
+    while(nextIndex<totalChunks){
+      const current=nextIndex++;
+      const bytes=await postChunk(uploadId,file,current,totalChunks);
+      onProgress(bytes);
+    }
+  }
+  await Promise.all(Array.from({length:Math.min(CHUNK_CONCURRENCY,totalChunks)},()=>worker()));
+  await finalizeChunkUpload(uploadId,file,relativePath);
+}
+
+async function uploadBatch(files, isFolder=false){
+  const list=[...files];
+  if(!list.length) return;
+  const oversize=list.find(f=>f.size>MAX_FILE);
+  if(oversize){ showToast('يوجد ملف أكبر من 5 جيجابايت.','warn'); return; }
+
+  const totalBytes=list.reduce((a,f)=>a+f.size,0);
+  let uploadedBytes=0;
+  const started=performance.now();
+
+  uploadInProgress = true;
   pWrap.classList.remove('hidden');
   pBar.style.width='0%';
   pText.textContent='0%';
   pSpeed.textContent='0 م.ب/ث';
 
-  const fd=new FormData(uploadForm);
-  const xhr=new XMLHttpRequest();
-  xhr.open('POST', window.location.pathname, true);
-
-  let lastTime = performance.now();
-  let lastLoaded = 0;
-  xhr.upload.onprogress=(ev)=>{
-    if(ev.lengthComputable){
-      const percent=Math.round((ev.loaded/ev.total)*100);
-      pBar.style.width=percent+'%';
-      pText.textContent=percent+'%';
-
-      const now = performance.now();
-      const deltaBytes = ev.loaded - lastLoaded;
-      const deltaSec = Math.max((now - lastTime)/1000, 0.001);
-      const speedMB = (deltaBytes / deltaSec) / (1024*1024);
-      pSpeed.textContent = speedMB.toFixed(2) + ' م.ب/ث';
-      lastLoaded = ev.loaded;
-      lastTime = now;
+  let idx=0;
+  async function fileWorker(){
+    while(idx<list.length){
+      const i=idx++;
+      const file=list[i];
+      const relativePath=isFolder ? (file.webkitRelativePath || file.name) : '';
+      await uploadFileInParallel(file, relativePath, (bytes)=>{
+        uploadedBytes += bytes;
+        const percent = totalBytes>0 ? Math.min(100, Math.round((uploadedBytes/totalBytes)*100)) : 100;
+        pBar.style.width=percent+'%';
+        pText.textContent=`${i+1}/${list.length} • ${percent}%`;
+        const elapsed=Math.max((performance.now()-started)/1000,0.001);
+        const speedMB=(uploadedBytes/elapsed)/(1024*1024);
+        pSpeed.textContent=speedMB.toFixed(2)+' م.ب/ث';
+      });
     }
-  };
-  xhr.onload=()=>{
-    if(xhr.status>=200 && xhr.status<300){
-      pText.textContent='100%';
-      pSpeed.textContent='اكتمل الرفع';
-      location.reload();
-    } else {
-      pWrap.classList.add('hidden');
-      try{const j=JSON.parse(xhr.responseText); alert(j.message||'فشل الرفع');}catch(_){alert('فشل الرفع');}
-    }
-  };
-  xhr.onerror=()=>{ pWrap.classList.add('hidden'); alert('فشل الاتصال أثناء الرفع.'); };
-  xhr.send(fd);
+  }
+
+  try {
+    await Promise.all(Array.from({length:Math.min(FILE_CONCURRENCY,list.length)},()=>fileWorker()));
+    pBar.style.width='100%';
+    pText.textContent=isFolder ? 'اكتمل رفع المجلد' : 'اكتمل الرفع';
+    pSpeed.textContent=`تم رفع ${list.length} ملف`;
+    uploadInProgress = false;
+    setTimeout(()=>{ if(window.location.pathname==='/files' || window.location.pathname.startsWith('/folders/')) location.reload(); }, 400);
+  } catch (e) {
+    uploadInProgress = false;
+    pWrap.classList.add('hidden');
+    showToast(e.message,'warn');
+  }
+}
+
+document.addEventListener('click', (e)=>{
+  if(!uploadInProgress) return;
+  const link=e.target.closest('a[href^="/"]');
+  if(!link) return;
+  const href=link.getAttribute('href') || '';
+  if(!href || href==='/logout' || link.target==='_blank') return;
+  e.preventDefault();
+  window.open(href, '_blank', 'noopener');
+  showToast('الرفع مستمر في هذه الصفحة. تم فتح الصفحة المطلوبة في تبويب جديد.','info');
+}, true);
+
+quickFileInput?.addEventListener('change', ()=>{
+  if(!quickFileInput.files?.length) return;
+  uploadBatch(quickFileInput.files, false);
+  quickFileInput.value='';
+});
+
+quickFolderInput?.addEventListener('change', ()=>{
+  if(!quickFolderInput.files?.length) return;
+  uploadBatch(quickFolderInput.files, true);
+  quickFolderInput.value='';
+});
+
+
+function hasRealFiles(dt){
+  if(!dt) return false;
+  if(dt.items && dt.items.length){
+    return [...dt.items].some(it=>it.kind==='file');
+  }
+  return !!(dt.files && dt.files.length);
+}
+
+document.querySelectorAll('.folder-card img, .file-grid-thumb-link').forEach(el=>{
+  el.setAttribute('draggable','false');
+  el.addEventListener('dragstart',(e)=>e.preventDefault());
+});
+
+let dragDepth=0;
+window.addEventListener('dragenter',(e)=>{
+  if(!hasRealFiles(e.dataTransfer)) return;
+  dragDepth++;
+  dropUploadOverlay?.classList.remove('hidden');
+});
+window.addEventListener('dragover',(e)=>{
+  if(!hasRealFiles(e.dataTransfer)) return;
+  e.preventDefault();
+});
+window.addEventListener('dragleave',()=>{
+  dragDepth=Math.max(0, dragDepth-1);
+  if(dragDepth===0) dropUploadOverlay?.classList.add('hidden');
+});
+window.addEventListener('drop',(e)=>{
+  if(!hasRealFiles(e.dataTransfer)) return;
+  e.preventDefault();
+  dragDepth=0;
+  dropUploadOverlay?.classList.add('hidden');
+  uploadBatch(e.dataTransfer.files, false);
 });
 
 const ctxMenu=document.getElementById('ctxMenu');
+const homeCtxMenu=document.getElementById('homeCtxMenu');
+let homeCtxTarget=null;
 const selectionBar=document.getElementById('selectionBar');
 const selectionCount=document.getElementById('selectionCount');
 const shareModal=document.getElementById('shareModal');
-const shareTitle=document.getElementById('shareTitle');
-const shareAccessSelect=document.getElementById('shareAccessSelect');
-const shareNote=document.getElementById('shareNote');
+const shareFileName=document.getElementById('shareFileName');
+const shareFileSize=document.getElementById('shareFileSize');
+const shareLinkInput=document.getElementById('share-link-input');
 const shareCopyBtn=document.getElementById('shareCopyBtn');
-const shareDoneBtn=document.getElementById('shareDoneBtn');
+const shareFacebook=document.getElementById('shareFacebook');
+const shareX=document.getElementById('shareX');
+const shareEmail=document.getElementById('shareEmail');
+const shareReddit=document.getElementById('shareReddit');
+const shareBlogger=document.getElementById('shareBlogger');
+const shareLinkedin=document.getElementById('shareLinkedin');
+const shareWhatsapp=document.getElementById('shareWhatsapp');
+const shareTelegram=document.getElementById('shareTelegram');
+const shareHomeToggle=document.getElementById('shareHomeToggle');
+let shareTargetEl=null;
+const selectionMeta=document.getElementById('selectionMeta');
+const moveModal=document.getElementById('moveModal');
+const moveModalTitle=document.getElementById('moveModalTitle');
+const moveSearchInput=document.getElementById('moveSearchInput');
+const moveFolderList=document.getElementById('moveFolderList');
+const moveConfirmBtn=document.getElementById('moveConfirmBtn');
+const moveCancelBtn=document.getElementById('moveCancelBtn');
+const renameModal=document.getElementById('renameModal');
+const renameInput=document.getElementById('renameInput');
+const renameCurrentLabel=document.getElementById('renameCurrentLabel');
+const renameSaveBtn=document.getElementById('renameSaveBtn');
+const renameCancelBtn=document.getElementById('renameCancelBtn');
+const emptyTrashBtn=document.getElementById('emptyTrashBtn');
+const toastRoot=document.getElementById('toastRoot');
 let currentTarget=null;
 let selectedItems=[];
+let dragMovePayload=null;
+
+function buildMovePayload(items){
+  const unique=[...new Set(items)].filter(Boolean);
+  const files=unique.filter(el=>el.dataset.type==='file');
+  const folders=unique.filter(el=>el.dataset.type==='folder');
+  return {
+    elements: unique,
+    fileIds: files.map(el=>el.dataset.id).filter(Boolean),
+    folderIds: folders.map(el=>el.dataset.id).filter(Boolean),
+  };
+}
+
+function removeMovedItemsFromView(items, targetFolderId){
+  const targetStr=(targetFolderId==null || targetFolderId==='') ? '' : String(targetFolderId);
+  items.forEach(el=>{
+    if(!el || !document.body.contains(el)) return;
+    if(el.dataset.type==='folder' && String(el.dataset.id||'')===targetStr) return;
+    el.remove();
+  });
+  setSelected(selectedItems.filter(el=>document.body.contains(el)));
+}
+
+async function moveElementsToFolder(items, targetFolderId){
+  const payload=buildMovePayload(items);
+  if(!payload.fileIds.length && !payload.folderIds.length){
+    showToast('لا توجد عناصر صالحة للنقل.','warn');
+    return;
+  }
+  const targetStr=(targetFolderId==null || targetFolderId==='') ? '' : String(targetFolderId);
+  if(payload.folderIds.includes(targetStr)){
+    showToast('لا يمكن نقل المجلد إلى نفسه.','warn');
+    return;
+  }
+  await postAction('move_items',{target_folder_id:targetStr,file_ids:payload.fileIds,folder_ids:payload.folderIds});
+  removeMovedItemsFromView(payload.elements, targetStr);
+  showToast('تم نقل العناصر بنجاح','success');
+}
 
 function setSelected(items){
   document.querySelectorAll('.is-selected').forEach(el=>el.classList.remove('is-selected'));
   selectedItems=[...new Set(items)].filter(Boolean);
   selectedItems.forEach(el=>el.classList.add('is-selected'));
   selectionCount.textContent=String(selectedItems.length);
-  if(selectionBar) selectionBar.classList.toggle('hidden', selectedItems.length===0);
+  if(selectionBar) selectionBar.classList.toggle('hidden', selectedItems.length<2);
+  updateSelectionActions();
+  updateSelectionMeta();
 }
 function pickOne(el){ setSelected([el]); currentTarget=el; }
 function getPrimary(){ return currentTarget || selectedItems[0] || null; }
+
+function showToast(message, tone='info'){
+  if(!toastRoot) return;
+  const el=document.createElement('div');
+  el.className='toast toast-'+tone;
+  el.textContent=message;
+  toastRoot.appendChild(el);
+  requestAnimationFrame(()=>el.classList.add('show'));
+  setTimeout(()=>{ el.classList.remove('show'); setTimeout(()=>el.remove(),180); }, 2600);
+}
+
+function isShared(el){ return !!el?.dataset?.shareUrl; }
+function updateSelectionMeta(){
+  if(!selectionMeta){ return; }
+  if(!selectedItems.length){ selectionMeta.textContent=''; return; }
+  if(selectedItems.length>1){
+    const fileCount=selectedItems.filter(x=>x.dataset.type==='file').length;
+    selectionMeta.textContent=`التحديد الحالي: ${fileCount} ملف.`;
+    return;
+  }
+  const el=selectedItems[0];
+  if(el.dataset.type!=='file'){
+    selectionMeta.textContent='العنصر المحدد مجلد.';
+    return;
+  }
+  selectionMeta.textContent=`الحالة: ${isShared(el)?'مشترك':'غير مشترك'}`;
+}
 
 function openMenu(ev, el){
   ev.preventDefault();
@@ -1244,61 +1974,105 @@ function openMenu(ev, el){
   ctxMenu.classList.remove('hidden');
 }
 
-function openShareDialog(el){
-  if(!el || el.dataset.type!=='file'){ alert('المشاركة متاحة للملفات فقط.'); return; }
-  shareTitle.textContent='مشاركة "'+(el.dataset.name||'ملف')+'"';
-  const isShared=!!el.dataset.shareUrl;
-  shareAccessSelect.value=isShared?'public':'private';
-  shareNote.textContent=isShared?'أي شخص لديه الرابط يمكنه الوصول.':'لا يمكن إلا للأشخاص الذين لديهم إذن الوصول.';
+function buildShareLinks(url, name){
+  const enc=encodeURIComponent(url);
+  const text=encodeURIComponent('شارك هذا الملف: '+name);
+  shareFacebook.href='https://www.facebook.com/sharer/sharer.php?u='+enc;
+  shareX.href='https://twitter.com/intent/tweet?url='+enc+'&text='+text;
+  shareEmail.href='mailto:?subject='+encodeURIComponent(name)+'&body='+enc;
+  shareReddit.href='https://www.reddit.com/submit?url='+enc+'&title='+encodeURIComponent(name);
+  shareBlogger.href='https://www.blogger.com/blog-this.g?u='+enc+'&n='+encodeURIComponent(name);
+  shareLinkedin.href='https://www.linkedin.com/sharing/share-offsite/?url='+enc;
+  shareWhatsapp.href='https://wa.me/?text='+text+'%20'+enc;
+  shareTelegram.href='https://t.me/share/url?url='+enc+'&text='+text;
+}
+
+async function ensureShareUrl(el){
+  if(el.dataset.shareUrl) return el.dataset.shareUrl;
+  const res=await postAction('toggle_share_file',{id:el.dataset.id});
+  el.dataset.shareUrl=res.share_url||'';
+  el.dataset.shared=el.dataset.shareUrl?'1':'0';
+  return el.dataset.shareUrl;
+}
+
+async function openShareDialog(el){
+  if(!el){ showToast('اختر عنصراً أولاً.','warn'); return; }
+  shareTargetEl=el;
+  const isFile=el.dataset.type==='file';
+  shareFileName.textContent=(el.dataset.name||'ملف');
+  const sizeText=isFile ? (el.querySelector('small')?.textContent?.split('•')[0]?.trim()||'-') : 'مجلد';
+  shareFileSize.textContent=sizeText;
+  if(shareHomeToggle) shareHomeToggle.checked = (el.dataset.homeShared==='1');
+
+  const linksWrap=shareModal?.querySelector('.ShareDialog-links');
+  if(linksWrap) linksWrap.classList.toggle('hidden', !isFile);
+
+  if(isFile){
+    const url=await ensureShareUrl(el);
+    if(!url){ showToast('تعذر إنشاء رابط مشاركة.','warn'); return; }
+    const full=window.location.origin+url;
+    shareLinkInput.value=full;
+    buildShareLinks(full, el.dataset.name||'ملف');
+  }
+
   shareModal.classList.remove('hidden');
 }
+
 
 async function postAction(action, payload={}){
   const fd=new FormData();
   fd.append('action', action);
   fd.append('redirect', window.location.pathname);
-  Object.entries(payload).forEach(([k,v])=>fd.append(k, v==null?'':String(v)));
+  Object.entries(payload).forEach(([k,v])=>{
+    if(Array.isArray(v)){
+      v.forEach(item=>fd.append(`${k}[]`, item==null?'':String(item)));
+      return;
+    }
+    fd.append(k, v==null?'':String(v));
+  });
   const r=await fetch(window.location.pathname,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd});
   const j=await r.json();
   if(!r.ok || !j.ok) throw new Error(j.message||'فشلت العملية');
   return j;
 }
 
+
+function getFileUrl(el){
+  if(!el) return '';
+  return el.dataset.fileUrl || el.querySelector('[data-file-url]')?.dataset.fileUrl || '';
+}
+
 async function submitCmd(cmd, el){
   if(!el) return;
   const type=el.dataset.type;
   const id=el.dataset.id;
-  if(cmd==='open'){
-    const a=(el.tagName==='A')?el:el.querySelector('a[href]');
-    if(a){ window.open(a.href, '_blank'); return; }
-  }
-  if(cmd==='download'){
+    if(cmd==='download'){
     if(type!=='file') return;
-    const a=(el.tagName==='A')?el:el.querySelector('a[href]');
-    if(a) window.open(a.href + (a.href.includes('?')?'&':'?')+'download=1','_blank');
+    const fileUrl=getFileUrl(el);
+    if(fileUrl) window.open(fileUrl + (fileUrl.includes('?')?'&':'?')+'download=1','_blank');
     return;
   }
   if(cmd==='info'){
-    alert(`الاسم: ${el.dataset.name||'-'}\nالمعرف: ${id||'-'}\nالنوع: ${type}`);
+    showToast(`الملف: ${el.dataset.name||'-'} • النوع: ${type}`,'info');
     return;
   }
   if(cmd==='rename'){
-    const n=prompt('الاسم الجديد:', el.dataset.name||'');
-    if(!n) return;
-    await postAction((type==='file'?'rename_file':'rename_folder'), {id:id,new_name:n});
-    el.dataset.name=n;
-    const lbl=el.querySelector('strong'); if(lbl) lbl.textContent=n;
+    openRenameModal(el);
+    return;
   }
-  if(cmd==='move' && type==='file'){
-    const to=prompt('أدخل رقم المجلد الهدف (فارغ = الجذر):','');
-    await postAction('move_file', {id:id,target_folder_id:to});
-    el.remove();
+  if(cmd==='password'){ showToast('ميزة حماية كلمة المرور ستتوفر قريباً.','info'); return; }
+  if(cmd==='move'){
+    openMoveModal([el]);
+    return;
   }
-  if(cmd==='share' && type==='file'){ openShareDialog(el); return; }
+  if(cmd==='share' && (type==='file' || type==='folder')){ openShareDialog(el); return; }
   if(cmd==='copy' && type==='file'){
-    const url=el.dataset.shareUrl;
-    if(!url){ alert('الملف غير مشارك. استخدم نافذة المشاركة أولاً.'); return; }
-    navigator.clipboard.writeText(window.location.origin+url); alert('تم نسخ رابط المشاركة');
+    const url=await ensureShareUrl(el);
+    if(!url){ showToast('تعذر إنشاء رابط مشاركة.','warn'); return; }
+    await navigator.clipboard.writeText(window.location.origin+url);
+    showToast('تم إنشاء ونسخ رابط مشاركة عام مباشرة','success');
+    updateSelectionMeta();
+    return;
   }
   if(cmd==='delete'){
     await postAction((type==='file'?'trash':'delete_folder'), {id:id});
@@ -1308,6 +2082,8 @@ async function submitCmd(cmd, el){
 
 document.querySelectorAll('[data-type]').forEach(el=>{
   el.classList.add('selectable-item');
+  el.setAttribute('draggable','true');
+
   el.addEventListener('click',(e)=>{
     if(e.target.closest('button,form,.star')) return;
     if(e.metaKey || e.ctrlKey){
@@ -1316,57 +2092,359 @@ document.querySelectorAll('[data-type]').forEach(el=>{
     } else {
       pickOne(el);
     }
-    if(el.tagName==='A') e.preventDefault();
+    if(el.dataset.type==='folder' && !e.metaKey && !e.ctrlKey){
+      const href=el.dataset.href||'';
+      if(href){ window.location.href=href; return; }
+    }
   });
-  el.addEventListener('dblclick',(e)=>{
-    const a=(el.tagName==='A')?el:el.querySelector('a[href]');
-    if(a){ window.open(a.href,'_blank'); }
+
+  el.addEventListener('dragstart',(e)=>{
+    const sourceItems=selectedItems.includes(el) ? selectedItems : [el];
+    if(!selectedItems.includes(el)) pickOne(el);
+    const payload=buildMovePayload(sourceItems);
+    dragMovePayload=payload;
+    e.dataTransfer.effectAllowed='move';
+    e.dataTransfer.setData('text/plain', JSON.stringify({file_ids:payload.fileIds, folder_ids:payload.folderIds}));
+    el.classList.add('is-dragging');
   });
+
+  el.addEventListener('dragend',()=>{
+    dragMovePayload=null;
+    document.querySelectorAll('.drop-target-active').forEach(x=>x.classList.remove('drop-target-active'));
+    document.querySelectorAll('.is-dragging').forEach(x=>x.classList.remove('is-dragging'));
+  });
+
+  if(el.dataset.type==='folder'){
+    el.addEventListener('dragover',(e)=>{
+      if(!dragMovePayload) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect='move';
+    });
+
+    el.addEventListener('dragenter',(e)=>{
+      if(!dragMovePayload) return;
+      e.preventDefault();
+      el.classList.add('drop-target-active');
+    });
+
+    el.addEventListener('dragleave',()=>{
+      el.classList.remove('drop-target-active');
+    });
+
+    el.addEventListener('drop', async (e)=>{
+      if(!dragMovePayload) return;
+      e.preventDefault();
+      e.stopPropagation();
+      el.classList.remove('drop-target-active');
+      const targetFolderId=String(el.dataset.id||'');
+      try{
+        await moveElementsToFolder(dragMovePayload.elements, targetFolderId);
+      }catch(err){
+        showToast(err.message||'فشلت عملية النقل.','warn');
+      } finally {
+        dragMovePayload=null;
+      }
+    });
+  }
+
   el.addEventListener('contextmenu',(e)=>openMenu(e, el));
 });
 
+const selectionSurface=document.getElementById('selectionSurface');
+const dragSelectionBox=document.getElementById('dragSelectionBox');
+let dragState=null;
+let suppressClearOnce=false;
+
+function getRectFromPoints(a,b){
+  const left=Math.min(a.x,b.x);
+  const top=Math.min(a.y,b.y);
+  return {left, top, width:Math.abs(a.x-b.x), height:Math.abs(a.y-b.y)};
+}
+
+function intersects(r1,r2){
+  return !(r2.left>r1.left+r1.width || r2.left+r2.width<r1.left || r2.top>r1.top+r1.height || r2.top+r2.height<r1.top);
+}
+
+selectionSurface?.addEventListener('mousedown',(e)=>{
+  if(e.button!==0) return;
+  if(e.target.closest('button,a,input,select,textarea,form,#ctxMenu,.modal-box')) return;
+  const surfaceRect=selectionSurface.getBoundingClientRect();
+  dragState={start:{x:e.clientX,y:e.clientY},surfaceRect,dragged:false};
+  if(dragSelectionBox){
+    dragSelectionBox.classList.add('hidden');
+    dragSelectionBox.style.left=(e.clientX-surfaceRect.left+selectionSurface.scrollLeft)+'px';
+    dragSelectionBox.style.top=(e.clientY-surfaceRect.top+selectionSurface.scrollTop)+'px';
+    dragSelectionBox.style.width='0px';
+    dragSelectionBox.style.height='0px';
+  }
+});
+
+document.addEventListener('mousemove',(e)=>{
+  if(!dragState || !selectionSurface || !dragSelectionBox) return;
+  const rect=getRectFromPoints(dragState.start,{x:e.clientX,y:e.clientY});
+
+  if(!dragState.dragged && (rect.width>3 || rect.height>3)){
+    dragState.dragged=true;
+    setSelected([]);
+    dragSelectionBox.classList.remove('hidden');
+  }
+  if(!dragState.dragged) return;
+
+  dragSelectionBox.style.left=(rect.left-dragState.surfaceRect.left+selectionSurface.scrollLeft)+'px';
+  dragSelectionBox.style.top=(rect.top-dragState.surfaceRect.top+selectionSurface.scrollTop)+'px';
+  dragSelectionBox.style.width=rect.width+'px';
+  dragSelectionBox.style.height=rect.height+'px';
+
+  const touched=[];
+  selectionSurface.querySelectorAll('[data-type]').forEach(el=>{
+    const r=el.getBoundingClientRect();
+    if(intersects(rect,{left:r.left,top:r.top,width:r.width,height:r.height})) touched.push(el);
+  });
+  setSelected(touched);
+});
+
+document.addEventListener('mouseup',()=>{
+  if(!dragState || !dragSelectionBox) return;
+  dragSelectionBox.classList.add('hidden');
+  suppressClearOnce=!!dragState.dragged;
+  dragState=null;
+});
+
 document.addEventListener('click',(e)=>{
-  if(!e.target.closest('[data-type], #ctxMenu, #selectionBar, #shareModal .modal-box')){
+  if(suppressClearOnce){ suppressClearOnce=false; return; }
+  if(!e.target.closest('[data-type], #ctxMenu, #selectionBar, #shareModal .modal-box, #moveModal .modal-box')){
     setSelected([]);
   }
   if(!e.target.closest('#ctxMenu')) ctxMenu.classList.add('hidden');
+  if(!e.target.closest('#homeCtxMenu')) homeCtxMenu?.classList.add('hidden');
 });
 
-document.querySelectorAll('[data-select-cmd]').forEach(btn=>btn.addEventListener('click',()=>{
-  const primary=getPrimary();
-  if(!primary) return;
-  if(selectedItems.length>1 && ['rename','move','share'].includes(btn.dataset.selectCmd)){
-    alert('هذه العملية متاحة لعنصر واحد فقط حالياً.');
+document.querySelectorAll('[data-select-cmd]').forEach(btn=>btn.addEventListener('click',async ()=>{
+  const cmd=btn.dataset.selectCmd;
+  if(selectedItems.length<2){ showToast('حدد ملفين فأكثر لإظهار شريط الإجراءات.','warn'); return; }
+
+  const filesOnly=selectedItems.filter(el=>el.dataset.type==='file');
+  const primary=selectedItems[0];
+
+  if(cmd==='download'){
+    if(!filesOnly.length){ showToast('التنزيل متاح للملفات فقط.','warn'); return; }
+    for(const el of filesOnly){
+      const fileUrl=getFileUrl(el);
+      if(fileUrl) window.open(fileUrl + (fileUrl.includes('?')?'&':'?')+'download=1','_blank');
+    }
+    showToast(`بدأ تنزيل ${filesOnly.length} ملف`,'success');
     return;
   }
-  submitCmd(btn.dataset.selectCmd, primary).catch(e=>alert(e.message));
+
+  if(cmd==='move'){ openMoveModal(selectedItems); return; }
+
+  if(cmd==='delete'){
+    for(const el of selectedItems){ await submitCmd('delete', el); }
+    showToast('تم تنفيذ النقل إلى المهملات للعناصر المحددة','success');
+    setSelected([]);
+    return;
+  }
+
+  if(cmd==='share' || cmd==='copy' || cmd==='rename'){
+    showToast('هذه العملية لا تدعم التحديد المتعدد في هذا المشروع حالياً.','warn');
+    return;
+  }
+
+  submitCmd(cmd, primary).catch(e=>showToast(e.message,'warn'));
 }));
 
-shareAccessSelect?.addEventListener('change',()=>{
-  const isPrivate=shareAccessSelect.value==='private';
-  shareNote.textContent=isPrivate?'لن يتمكن غير الأشخاص الذين لديهم إذن الوصول إلى الرابط':'أي شخص لديه الرابط سيتمكن من الوصول.';
+
+let pendingMoveItems=[];
+let moveTargetFolder='';
+let renameTarget=null;
+
+function openRenameModal(el){
+  renameTarget=el||null;
+  if(!renameTarget) return;
+  if(renameCurrentLabel) renameCurrentLabel.textContent=`العنصر الحالي: ${renameTarget.dataset.name||''}`;
+  if(renameInput) renameInput.value=renameTarget.dataset.name||'';
+  renameModal?.classList.remove('hidden');
+  setTimeout(()=>renameInput?.focus(), 50);
+}
+
+
+function updateSelectionActions(){
+  if(!selectionBar) return;
+  const count=selectedItems.length;
+  const filesOnly=selectedItems.filter(el=>el.dataset.type==='file').length;
+  const hasFolder=selectedItems.some(el=>el.dataset.type==='folder');
+  const btn=(cmd)=>selectionBar.querySelector(`[data-select-cmd="${cmd}"]`);
+
+  if(btn('download')) btn('download').classList.toggle('hidden', !(count>=2 && filesOnly>0));
+  if(btn('move')) btn('move').classList.toggle('hidden', count<2);
+  if(btn('delete')) btn('delete').classList.toggle('hidden', count<2);
+  if(btn('rename')) btn('rename').classList.add('hidden');
+  if(btn('share')) btn('share').classList.add('hidden');
+  if(btn('copy')) btn('copy').classList.add('hidden');
+}
+
+function openMoveModal(items){
+  pendingMoveItems=[...items];
+  moveTargetFolder='';
+  if(moveModalTitle) moveModalTitle.textContent=`نقل ${items.length} عنصر`;
+  moveConfirmBtn.disabled=true;
+  moveModal.classList.remove('hidden');
+}
+
+moveFolderList?.addEventListener('click',(e)=>{
+  const btn=e.target.closest('.move-folder-item');
+  if(!btn) return;
+  moveTargetFolder=btn.dataset.folderId||'';
+  moveFolderList.querySelectorAll('.move-folder-item').forEach(x=>x.classList.remove('active'));
+  btn.classList.add('active');
+  moveConfirmBtn.disabled=false;
 });
+
+moveSearchInput?.addEventListener('input',()=>{
+  const q=moveSearchInput.value.trim().toLowerCase();
+  moveFolderList.querySelectorAll('.move-folder-item').forEach(btn=>{
+    const t=btn.textContent.toLowerCase();
+    btn.classList.toggle('hidden', q && !t.includes(q));
+  });
+});
+
+moveCancelBtn?.addEventListener('click',()=>moveModal.classList.add('hidden'));
+moveConfirmBtn?.addEventListener('click', async ()=>{
+  if(!pendingMoveItems.length) return;
+  try{
+    await moveElementsToFolder(pendingMoveItems, moveTargetFolder);
+    moveModal.classList.add('hidden');
+  }catch(err){
+    showToast(err.message||'فشلت عملية النقل.','warn');
+  }
+});
+
+renameCancelBtn?.addEventListener('click',()=>renameModal?.classList.add('hidden'));
+renameSaveBtn?.addEventListener('click', async ()=>{
+  if(!renameTarget) return;
+  const n=(renameInput?.value||'').trim();
+  if(!n){ showToast('أدخل اسماً جديداً.','warn'); return; }
+  await postAction((renameTarget.dataset.type==='file'?'rename_file':'rename_folder'), {id:renameTarget.dataset.id,new_name:n});
+  renameTarget.dataset.name=n;
+  const lbl=renameTarget.querySelector('strong'); if(lbl) lbl.textContent=n;
+  renameModal?.classList.add('hidden');
+  showToast('تمت إعادة التسمية بنجاح','success');
+});
+renameInput?.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); renameSaveBtn?.click(); }});
+
+emptyTrashBtn?.addEventListener('click', async ()=>{
+  if(!confirm('هل تريد حذف كل الملفات من سلة المهملات نهائياً؟')) return;
+  await postAction('empty_trash',{});
+  showToast('تم حذف كل ملفات سلة المهملات نهائياً','success');
+  setTimeout(()=>location.reload(), 300);
+});
+
+shareHomeToggle?.addEventListener('change', async ()=>{
+  if(!shareTargetEl){ shareHomeToggle.checked=false; return; }
+  const enabled=shareHomeToggle.checked ? 1 : 0;
+  try{
+    if(shareTargetEl.dataset.type==='file'){
+      const res=await postAction('toggle_home_share_file',{id:shareTargetEl.dataset.id, enabled});
+      shareTargetEl.dataset.homeShared = String(res.home_shared||0);
+      if(res.share_url){ shareTargetEl.dataset.shareUrl=res.share_url; shareTargetEl.dataset.shared='1'; }
+    } else {
+      const res=await postAction('toggle_home_share_folder',{id:shareTargetEl.dataset.id, enabled});
+      shareTargetEl.dataset.homeShared = String(res.home_shared||0);
+    }
+    showToast(enabled ? 'تم تفعيل الظهور في الرئيسية' : 'تم إيقاف الظهور في الرئيسية','success');
+  }catch(e){
+    shareHomeToggle.checked=!shareHomeToggle.checked;
+    showToast(e.message,'warn');
+  }
+});
+
+
 shareCopyBtn?.addEventListener('click', async ()=>{
   const primary=getPrimary();
-  if(!primary || primary.dataset.type!=='file'){ alert('اختر ملفاً أولاً.'); return; }
-  if(!primary.dataset.shareUrl){
-    if(confirm('الملف غير مشارك. تفعيل المشاركة الآن؟')){
-      const res=await postAction('toggle_share_file',{id:primary.dataset.id});
-      primary.dataset.shareUrl=res.share_url||'';
-    }
-    return;
-  }
-  navigator.clipboard.writeText(window.location.origin + primary.dataset.shareUrl);
-  alert('تم نسخ الرابط');
+  if(!primary || primary.dataset.type!=='file'){ showToast('اختر ملفاً أولاً.','warn'); return; }
+  const url=await ensureShareUrl(primary);
+  if(!url){ showToast('تعذر إنشاء رابط مشاركة.','warn'); return; }
+  const full=window.location.origin + url;
+  shareLinkInput.value=full;
+  buildShareLinks(full, primary.dataset.name||'ملف');
+  await navigator.clipboard.writeText(full);
+  showToast('تم نسخ الرابط','success');
+  updateSelectionMeta();
 });
-shareDoneBtn?.addEventListener('click',()=>shareModal.classList.add('hidden'));
+
+document.querySelectorAll('.home-shared-card').forEach(card=>{
+  card.addEventListener('contextmenu',(e)=>{
+    if(!homeCtxMenu) return;
+    e.preventDefault();
+    homeCtxTarget=card;
+    const pad=8, menuW=240, menuH=110;
+    homeCtxMenu.style.left=Math.min(e.clientX, window.innerWidth-menuW-pad)+'px';
+    homeCtxMenu.style.top=Math.min(e.clientY, window.innerHeight-menuH-pad)+'px';
+    homeCtxMenu.classList.remove('hidden');
+  });
+});
+
+homeCtxMenu?.querySelectorAll('button').forEach(btn=>btn.addEventListener('click', async ()=>{
+  if(!homeCtxTarget) return;
+  const cmd=btn.dataset.homeCmd;
+  const shareUrl=homeCtxTarget.dataset.shareUrl||'';
+  const downloadUrl=homeCtxTarget.dataset.downloadUrl||'';
+  if(cmd==='copy' && shareUrl){
+    try{ await navigator.clipboard.writeText(window.location.origin+shareUrl); showToast('تم نسخ الرابط','success'); }catch(e){ showToast('تعذر نسخ الرابط','warn'); }
+  }
+  if(cmd==='download' && downloadUrl){
+    window.open(downloadUrl,'_blank');
+  }
+  homeCtxMenu.classList.add('hidden');
+}));
 
 ctxMenu?.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',(e)=>{
   e.stopPropagation();
+  ctxMenu.classList.add('hidden'); if(homeCtxMenu) homeCtxMenu.classList.add('hidden');
   const primary=getPrimary();
   if(!primary) return;
-  submitCmd(btn.dataset.cmd, primary).catch(e=>alert(e.message));
+  submitCmd(btn.dataset.cmd, primary).catch(e=>showToast(e.message,'warn'));
 }));
+
+(function setupInfiniteFilesLoading(){
+  const content=document.querySelector('main.content');
+  const filesGrid=document.getElementById('filesGrid');
+  const loader=document.getElementById('filesInfiniteLoader');
+  if(!content || !filesGrid || !loader) return;
+
+  const cards=Array.from(filesGrid.querySelectorAll('.file-grid-card[data-type="file"]'));
+  const pageSize=24;
+  if(cards.length<=pageSize){
+    loader.classList.add('hidden');
+    return;
+  }
+
+  let visibleCount=pageSize;
+  let loading=false;
+
+  function render(){
+    cards.forEach((card,idx)=>card.classList.toggle('lazy-hidden', idx>=visibleCount));
+    loader.classList.toggle('hidden', visibleCount>=cards.length);
+  }
+
+  async function loadMore(){
+    if(loading || visibleCount>=cards.length) return;
+    loading=true;
+    loader.classList.add('is-loading');
+    await new Promise(r=>setTimeout(r, 320));
+    visibleCount=Math.min(visibleCount+pageSize, cards.length);
+    render();
+    loader.classList.remove('is-loading');
+    loading=false;
+  }
+
+  content.addEventListener('scroll',()=>{
+    const nearBottom=content.scrollTop + content.clientHeight >= content.scrollHeight - 160;
+    if(nearBottom) loadMore();
+  },{passive:true});
+
+  render();
+})();
 </script>
 <?php endif; ?>
 </body>
