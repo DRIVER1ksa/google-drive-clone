@@ -1426,7 +1426,13 @@ function drawRegionsMap() {
       <p>تم استخدام <?= format_bytes($storage) ?> من إجمالي 1 تيرابايت</p>
     </div>
 
-    <div id="uploadProgress" class="progress hidden"><div id="uploadProgressBar"></div><p id="uploadProgressText">0%</p><p id="uploadSpeedText">0 م.ب/ث</p></div>
+    <div id="uploadProgress" class="progress hidden">
+      <div class="upload-progress-head"><strong>حالة الرفع</strong><button type="button" id="uploadCancelBtn" class="upload-cancel-btn hidden"><i class="fas fa-ban"></i> إلغاء الرفع</button></div>
+      <div id="uploadProgressBar"></div>
+      <p id="uploadProgressText">0%</p>
+      <p id="uploadSpeedText">0 م.ب/ث</p>
+      <div id="uploadQueueList" class="upload-queue-list"></div>
+    </div>
 
     <div id="selectionBar" class="selection-bar hidden sidebar-selection-bar">
       <div class="selection-count"><span id="selectionCount">0</span> عنصر محدد</div>
@@ -1681,20 +1687,87 @@ const pWrap = document.getElementById('uploadProgress');
 const pBar = document.getElementById('uploadProgressBar');
 const pText = document.getElementById('uploadProgressText');
 const pSpeed = document.getElementById('uploadSpeedText');
+const uploadQueueList = document.getElementById('uploadQueueList');
+const uploadCancelBtn = document.getElementById('uploadCancelBtn');
 const activeFolderId = <?= $route==='folder' ? (int)$currentFolderId : 'null' ?>;
 const UPLOAD_ENDPOINT = '/files';
 let uploadInProgress = false;
-
+let activeUploadState = null;
 
 const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB
-const CHUNK_CONCURRENCY = 4;
-const FILE_CONCURRENCY = 2;
+const CHUNK_CONCURRENCY = 1; // مع FILE_CONCURRENCY=8 نحافظ على حد 8 اتصالات رفع فعلية
+const FILE_CONCURRENCY = 8;
 
 function generateUploadId(){
   return 'up_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10);
 }
 
-async function postChunk(uploadId, file, chunkIndex, totalChunks){
+function formatUploadBytes(bytes){
+  const units=['B','KB','MB','GB','TB'];
+  let n=Math.max(0, Number(bytes)||0), i=0;
+  while(n>=1024 && i<units.length-1){ n/=1024; i++; }
+  return (i===0?Math.round(n):n.toFixed(2)) + ' ' + units[i];
+}
+
+function createQueueRows(files, isFolder){
+  if(!uploadQueueList) return [];
+  uploadQueueList.innerHTML='';
+  return files.map((file, idx)=>{
+    const row=document.createElement('div');
+    row.className='upload-queue-item';
+    row.innerHTML=`<div class="upload-queue-top"><span class="upload-queue-name"></span><span class="upload-queue-state">بانتظار الرفع</span></div><div class="upload-queue-track"><span></span></div><div class="upload-queue-meta">0% • 0 / ${formatUploadBytes(file.size)}</div>`;
+    row.querySelector('.upload-queue-name').textContent = isFolder ? (file.webkitRelativePath||file.name) : file.name;
+    uploadQueueList.appendChild(row);
+    return {
+      row,
+      stateEl: row.querySelector('.upload-queue-state'),
+      barEl: row.querySelector('.upload-queue-track span'),
+      metaEl: row.querySelector('.upload-queue-meta'),
+      uploaded: 0,
+      size: file.size,
+      done: false,
+      failed: false,
+      canceled: false,
+      index: idx,
+    };
+  });
+}
+
+function updateQueueItem(item, status){
+  const pct=item.size>0 ? Math.min(100, Math.round((item.uploaded/item.size)*100)) : 100;
+  item.barEl.style.width=pct+'%';
+  item.metaEl.textContent=`${pct}% • ${formatUploadBytes(item.uploaded)} / ${formatUploadBytes(item.size)}`;
+  if(status==='uploading') item.stateEl.textContent='جارٍ الرفع...';
+  if(status==='done'){ item.stateEl.textContent='اكتمل'; item.done=true; item.row.classList.add('is-done'); }
+  if(status==='failed'){ item.stateEl.textContent='فشل'; item.failed=true; item.row.classList.add('is-failed'); }
+  if(status==='canceled'){ item.stateEl.textContent='أُلغي'; item.canceled=true; item.row.classList.add('is-canceled'); }
+}
+
+function refreshGlobalProgress(uploadState){
+  const percent = uploadState.totalBytes>0 ? Math.min(100, Math.round((uploadState.uploadedBytes/uploadState.totalBytes)*100)) : 100;
+  pBar.style.width=percent+'%';
+  const completed=uploadState.queueItems.filter(x=>x.done).length;
+  pText.textContent=`${completed}/${uploadState.queueItems.length} • ${percent}%`;
+  const elapsed=Math.max((performance.now()-uploadState.startedAt)/1000,0.001);
+  const speedMB=(uploadState.uploadedBytes/elapsed)/(1024*1024);
+  pSpeed.textContent=`${speedMB.toFixed(2)} م.ب/ث • ${formatUploadBytes(uploadState.uploadedBytes)} / ${formatUploadBytes(uploadState.totalBytes)}`;
+}
+
+function abortAllUploads(){
+  if(!activeUploadState) return;
+  activeUploadState.cancelled=true;
+  activeUploadState.controllers.forEach(c=>{ try{ c.abort(); }catch(e){} });
+  activeUploadState.controllers.clear();
+  if(uploadCancelBtn){ uploadCancelBtn.disabled=true; uploadCancelBtn.innerHTML='<i class="fas fa-spinner fa-spin"></i> جارٍ الإلغاء...'; }
+}
+
+uploadCancelBtn?.addEventListener('click', ()=>{
+  if(!uploadInProgress || !activeUploadState) return;
+  abortAllUploads();
+});
+
+async function postChunk(uploadId, file, chunkIndex, totalChunks, uploadState){
+  if(uploadState?.cancelled) throw new Error('UPLOAD_CANCELLED');
   const start=chunkIndex*CHUNK_SIZE;
   const end=Math.min(start+CHUNK_SIZE, file.size);
   const blob=file.slice(start,end);
@@ -1704,13 +1777,23 @@ async function postChunk(uploadId, file, chunkIndex, totalChunks){
   fd.append('chunk_index', String(chunkIndex));
   fd.append('total_chunks', String(totalChunks));
   fd.append('chunk', blob, file.name+`.part${chunkIndex}`);
-  const r=await fetch(UPLOAD_ENDPOINT,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd});
-  const j=await r.json().catch(()=>({ok:false,message:'فشل رفع جزء من الملف'}));
-  if(!r.ok || !j.ok) throw new Error(j.message||'فشل رفع جزء من الملف');
-  return blob.size;
+  const controller=new AbortController();
+  uploadState?.controllers.add(controller);
+  try{
+    const r=await fetch(UPLOAD_ENDPOINT,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd,signal:controller.signal});
+    const j=await r.json().catch(()=>({ok:false,message:'فشل رفع جزء من الملف'}));
+    if(!r.ok || !j.ok) throw new Error(j.message||'فشل رفع جزء من الملف');
+    return blob.size;
+  }catch(err){
+    if(err?.name==='AbortError' || uploadState?.cancelled) throw new Error('UPLOAD_CANCELLED');
+    throw err;
+  }finally{
+    uploadState?.controllers.delete(controller);
+  }
 }
 
-async function finalizeChunkUpload(uploadId, file, relativePath=''){
+async function finalizeChunkUpload(uploadId, file, relativePath='', uploadState){
+  if(uploadState?.cancelled) throw new Error('UPLOAD_CANCELLED');
   const totalChunks=Math.max(1, Math.ceil(file.size/CHUNK_SIZE));
   const fd=new FormData();
   fd.append('action','complete_chunk_upload');
@@ -1720,37 +1803,56 @@ async function finalizeChunkUpload(uploadId, file, relativePath=''){
   fd.append('size', String(file.size));
   fd.append('relative_path', relativePath||'');
   fd.append('folder_id', activeFolderId==null ? '' : String(activeFolderId));
-  const r=await fetch(UPLOAD_ENDPOINT,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd});
-  const j=await r.json().catch(()=>({ok:false,message:'فشل إنهاء رفع الملف'}));
-  if(!r.ok || !j.ok) throw new Error(j.message||'فشل إنهاء رفع الملف');
+  const controller=new AbortController();
+  uploadState?.controllers.add(controller);
+  try{
+    const r=await fetch(UPLOAD_ENDPOINT,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd,signal:controller.signal});
+    const j=await r.json().catch(()=>({ok:false,message:'فشل إنهاء رفع الملف'}));
+    if(!r.ok || !j.ok) throw new Error(j.message||'فشل إنهاء رفع الملف');
+  }catch(err){
+    if(err?.name==='AbortError' || uploadState?.cancelled) throw new Error('UPLOAD_CANCELLED');
+    throw err;
+  }finally{
+    uploadState?.controllers.delete(controller);
+  }
 }
 
-async function uploadFileInParallel(file, relativePath, onProgress){
+async function uploadFileInParallel(file, relativePath, onProgress, uploadState){
   const totalChunks=Math.max(1, Math.ceil(file.size/CHUNK_SIZE));
   const uploadId=generateUploadId();
   let nextIndex=0;
   async function worker(){
     while(nextIndex<totalChunks){
+      if(uploadState?.cancelled) throw new Error('UPLOAD_CANCELLED');
       const current=nextIndex++;
-      const bytes=await postChunk(uploadId,file,current,totalChunks);
+      const bytes=await postChunk(uploadId,file,current,totalChunks,uploadState);
       onProgress(bytes);
     }
   }
   await Promise.all(Array.from({length:Math.min(CHUNK_CONCURRENCY,totalChunks)},()=>worker()));
-  await finalizeChunkUpload(uploadId,file,relativePath);
+  await finalizeChunkUpload(uploadId,file,relativePath,uploadState);
 }
 
 async function uploadBatch(files, isFolder=false){
+  if(uploadInProgress){ showToast('يوجد رفع نشط حالياً.','warn'); return; }
   const list=[...files];
   if(!list.length) return;
   const oversize=list.find(f=>f.size>MAX_FILE);
   if(oversize){ showToast('يوجد ملف أكبر من 5 جيجابايت.','warn'); return; }
 
-  const totalBytes=list.reduce((a,f)=>a+f.size,0);
-  let uploadedBytes=0;
-  const started=performance.now();
-
+  const queueItems=createQueueRows(list, isFolder);
+  const uploadState={
+    cancelled:false,
+    controllers:new Set(),
+    totalBytes:list.reduce((a,f)=>a+f.size,0),
+    uploadedBytes:0,
+    startedAt:performance.now(),
+    queueItems,
+  };
+  activeUploadState=uploadState;
   uploadInProgress = true;
+
+  if(uploadCancelBtn){ uploadCancelBtn.disabled=false; uploadCancelBtn.classList.remove('hidden'); uploadCancelBtn.innerHTML='<i class="fas fa-ban"></i> إلغاء الرفع'; }
   pWrap.classList.remove('hidden');
   pBar.style.width='0%';
   pText.textContent='0%';
@@ -1759,45 +1861,47 @@ async function uploadBatch(files, isFolder=false){
   let idx=0;
   async function fileWorker(){
     while(idx<list.length){
+      if(uploadState.cancelled) throw new Error('UPLOAD_CANCELLED');
       const i=idx++;
       const file=list[i];
+      const q=queueItems[i];
+      updateQueueItem(q,'uploading');
       const relativePath=isFolder ? (file.webkitRelativePath || file.name) : '';
       await uploadFileInParallel(file, relativePath, (bytes)=>{
-        uploadedBytes += bytes;
-        const percent = totalBytes>0 ? Math.min(100, Math.round((uploadedBytes/totalBytes)*100)) : 100;
-        pBar.style.width=percent+'%';
-        pText.textContent=`${i+1}/${list.length} • ${percent}%`;
-        const elapsed=Math.max((performance.now()-started)/1000,0.001);
-        const speedMB=(uploadedBytes/elapsed)/(1024*1024);
-        pSpeed.textContent=speedMB.toFixed(2)+' م.ب/ث';
-      });
+        q.uploaded=Math.min(q.size, q.uploaded + bytes);
+        uploadState.uploadedBytes=Math.min(uploadState.totalBytes, uploadState.uploadedBytes + bytes);
+        updateQueueItem(q,'uploading');
+        refreshGlobalProgress(uploadState);
+      }, uploadState);
+      q.uploaded=q.size;
+      updateQueueItem(q,'done');
+      refreshGlobalProgress(uploadState);
     }
   }
 
   try {
     await Promise.all(Array.from({length:Math.min(FILE_CONCURRENCY,list.length)},()=>fileWorker()));
-    pBar.style.width='100%';
-    pText.textContent=isFolder ? 'اكتمل رفع المجلد' : 'اكتمل الرفع';
-    pSpeed.textContent=`تم رفع ${list.length} ملف`;
-    uploadInProgress = false;
-    setTimeout(()=>{ if(window.location.pathname==='/files' || window.location.pathname.startsWith('/folders/')) location.reload(); }, 400);
+    uploadInProgress=false;
+    activeUploadState=null;
+    if(uploadCancelBtn){ uploadCancelBtn.classList.add('hidden'); }
+    pText.textContent=`تم رفع ${list.length} ملف`;
+    showToast('اكتمل رفع الملفات بنجاح','success');
+    setTimeout(()=>{ if(window.location.pathname==='/files' || window.location.pathname.startsWith('/folders/')) location.reload(); }, 450);
   } catch (e) {
-    uploadInProgress = false;
-    pWrap.classList.add('hidden');
-    showToast(e.message,'warn');
+    uploadInProgress=false;
+    if(uploadCancelBtn){ uploadCancelBtn.classList.add('hidden'); }
+    if(String(e?.message||'')==='UPLOAD_CANCELLED'){
+      queueItems.forEach(item=>{ if(!item.done && !item.failed) updateQueueItem(item,'canceled'); });
+      showToast('تم إلغاء الرفع الحالي','warn');
+      pText.textContent='تم إلغاء الرفع';
+    } else {
+      const next=queueItems.find(item=>!item.done && !item.failed && !item.canceled);
+      if(next) updateQueueItem(next,'failed');
+      showToast(e.message||'فشل الرفع','warn');
+    }
+    activeUploadState=null;
   }
 }
-
-document.addEventListener('click', (e)=>{
-  if(!uploadInProgress) return;
-  const link=e.target.closest('a[href^="/"]');
-  if(!link) return;
-  const href=link.getAttribute('href') || '';
-  if(!href || href==='/logout' || link.target==='_blank') return;
-  e.preventDefault();
-  window.open(href, '_blank', 'noopener');
-  showToast('الرفع مستمر في هذه الصفحة. تم فتح الصفحة المطلوبة في تبويب جديد.','info');
-}, true);
 
 quickFileInput?.addEventListener('change', ()=>{
   if(!quickFileInput.files?.length) return;
