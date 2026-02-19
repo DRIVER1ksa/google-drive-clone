@@ -29,6 +29,7 @@ function ensure_schema(PDO $pdo): void {
         parent_id BIGINT UNSIGNED NULL,
         shared_token VARCHAR(64) NULL,
         home_shared TINYINT(1) NOT NULL DEFAULT 0,
+        password_hash VARCHAR(255) NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY uq_folder_token (shared_token),
         INDEX idx_user_parent (user_id, parent_id)
@@ -49,6 +50,7 @@ function ensure_schema(PDO $pdo): void {
       is_trashed TINYINT(1) NOT NULL DEFAULT 0,
       download_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
       home_shared TINYINT(1) NOT NULL DEFAULT 0,
+      password_hash VARCHAR(255) NULL,
       uploader_ip VARCHAR(64) NULL,
       uploader_country CHAR(2) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -65,6 +67,7 @@ function ensure_schema(PDO $pdo): void {
     if (!in_array('uploader_ip', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN uploader_ip VARCHAR(64) NULL");
     if (!in_array('uploader_country', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN uploader_country CHAR(2) NULL");
     if (!in_array('home_shared', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN home_shared TINYINT(1) NOT NULL DEFAULT 0");
+    if (!in_array('password_hash', $cols, true)) $pdo->exec("ALTER TABLE files ADD COLUMN password_hash VARCHAR(255) NULL");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS app_settings (
       `key` VARCHAR(100) PRIMARY KEY,
@@ -75,6 +78,7 @@ function ensure_schema(PDO $pdo): void {
     $fcols = $pdo->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='folders'")->fetchAll(PDO::FETCH_COLUMN);
     if (!in_array('shared_token', $fcols, true)) $pdo->exec("ALTER TABLE folders ADD COLUMN shared_token VARCHAR(64) NULL, ADD UNIQUE KEY uq_folder_token (shared_token)");
     if (!in_array('home_shared', $fcols, true)) $pdo->exec("ALTER TABLE folders ADD COLUMN home_shared TINYINT(1) NOT NULL DEFAULT 0");
+    if (!in_array('password_hash', $fcols, true)) $pdo->exec("ALTER TABLE folders ADD COLUMN password_hash VARCHAR(255) NULL");
 }
 
 function xf_auth(array $config, string $login, string $password): ?array {
@@ -243,6 +247,36 @@ function validate_download_gate(array $file, bool $isShared, ?string $gate): boo
         && (int)($meta['expires_at'] ?? 0) >= time();
 }
 
+
+function has_item_password_access(string $scope, int $id): bool {
+    return !empty($_SESSION['item_password_ok'][$scope][$id]);
+}
+
+function mark_item_password_access(string $scope, int $id): void {
+    if (!isset($_SESSION['item_password_ok']) || !is_array($_SESSION['item_password_ok'])) $_SESSION['item_password_ok'] = [];
+    if (!isset($_SESSION['item_password_ok'][$scope]) || !is_array($_SESSION['item_password_ok'][$scope])) $_SESSION['item_password_ok'][$scope] = [];
+    $_SESSION['item_password_ok'][$scope][$id] = time();
+}
+
+function require_password_if_needed(string $scope, int $id, string $title, string $hash, string $returnUrl): void {
+    if ($hash === '' || has_item_password_access($scope, $id)) return;
+    $error = null;
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['action'] ?? '') === 'unlock_item_password') {
+        $pwd = (string)($_POST['item_password'] ?? '');
+        if ($pwd !== '' && password_verify($pwd, $hash)) {
+            mark_item_password_access($scope, $id);
+            header('Location: ' . $returnUrl);
+            exit;
+        }
+        $error = 'كلمة المرور غير صحيحة.';
+    }
+    $safeTitle = htmlspecialchars($title);
+    $safeUrl = htmlspecialchars($returnUrl);
+    $errorHtml = $error ? '<div class="flash error" style="margin-bottom:12px">' . htmlspecialchars($error) . '</div>' : '';
+    echo "<!doctype html><html lang='ar' dir='rtl'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>حماية بكلمة مرور</title><link rel='stylesheet' href='/public/assets/style.css'></head><body><main class='login-wrap'><section class='login-card'><h1>{$safeTitle}</h1><p>هذا العنصر محمي بكلمة مرور.</p>{$errorHtml}<form method='post' class='login-form'><input type='hidden' name='action' value='unlock_item_password'><input type='password' name='item_password' placeholder='أدخل كلمة المرور' required><button type='submit'>فتح</button></form><p style='margin-top:8px'><a href='{$safeUrl}'>إعادة المحاولة</a></p></section></main></body></html>";
+    exit;
+}
+
 function increment_download_count(PDO $pdo, int $fileId): void {
     $st = $pdo->prepare('UPDATE files SET download_count = COALESCE(download_count,0) + 1 WHERE id=?');
     $st->execute([$fileId]);
@@ -355,6 +389,7 @@ if (!empty($segments[0]) && $segments[0] === 's' && isset($segments[1])) {
 
     $downloadFlag = isset($_GET['download']) && $_GET['download'] === '1';
     $gate = $_GET['gate'] ?? null;
+    require_password_if_needed('file_shared', (int)$file['id'], 'ملف محمي بكلمة مرور', (string)($file['password_hash'] ?? ''), $_SERVER['REQUEST_URI'] ?? '/');
     $shareUrl = share_url((string)$file['shared_token'], (string)$file['filename']);
     $requiresGate = should_show_download_page((string)$file['filename'], (string)$file['mime_type']);
     if ($requiresGate) {
@@ -386,10 +421,11 @@ if (!empty($segments[0]) && $segments[0] === 's' && isset($segments[1])) {
 if (!empty($segments[0]) && $segments[0] === 'sf' && isset($segments[1])) {
     if (!$pdo) { http_response_code(500); exit('DB error'); }
     $token = trim((string)$segments[1]);
-    $qf = $pdo->prepare('SELECT id,name,user_id FROM folders WHERE shared_token=? LIMIT 1');
+    $qf = $pdo->prepare('SELECT id,name,user_id,password_hash FROM folders WHERE shared_token=? LIMIT 1');
     $qf->execute([$token]);
     $folder = $qf->fetch();
     if (!$folder) { http_response_code(404); exit('Shared folder not found'); }
+    require_password_if_needed('folder_shared', (int)$folder['id'], 'مجلد محمي بكلمة مرور', (string)($folder['password_hash'] ?? ''), $_SERVER['REQUEST_URI'] ?? '/');
     $q = $pdo->prepare('SELECT id,filename,mime_type,size_bytes,shared_token,created_at,user_name FROM files WHERE folder_id=? AND is_trashed=0 AND shared_token IS NOT NULL ORDER BY created_at DESC');
     $q->execute([(int)$folder['id']]);
     $files = $q->fetchAll();
@@ -427,6 +463,7 @@ if (!empty($segments[0]) && $segments[0] === 'd' && isset($segments[1])) {
 
     $downloadFlag = isset($_GET['download']) && $_GET['download'] === '1';
     $gate = $_GET['gate'] ?? null;
+    require_password_if_needed('file_private', (int)$file['id'], 'ملف محمي بكلمة مرور', (string)($file['password_hash'] ?? ''), $_SERVER['REQUEST_URI'] ?? '/');
     $privateUrl = file_url($file);
     $requiresGate = should_show_download_page((string)$file['filename'], (string)$file['mime_type']);
     if ($requiresGate) {
@@ -573,6 +610,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($newName === '') throw new RuntimeException('الاسم الجديد فارغ.');
             $st = $pdo->prepare('UPDATE folders SET name=? WHERE id=? AND user_id=?');
             $st->execute([$newName, $id, $user['id']]);
+        }
+
+
+        if ($action === 'set_password') {
+            $id = (int)($_POST['id'] ?? 0);
+            $targetType = (string)($_POST['target_type'] ?? '');
+            $password = trim((string)($_POST['password'] ?? ''));
+            if ($targetType === 'folder') {
+                $hash = $password === '' ? null : password_hash($password, PASSWORD_DEFAULT);
+                $st = $pdo->prepare('UPDATE folders SET password_hash=? WHERE id=? AND user_id=?');
+                $st->execute([$hash, $id, $user['id']]);
+            } elseif ($targetType === 'file') {
+                $q = $pdo->prepare('SELECT filename,mime_type FROM files WHERE id=? AND user_id=? LIMIT 1');
+                $q->execute([$id, $user['id']]);
+                $row = $q->fetch();
+                if (!$row) throw new RuntimeException('الملف غير موجود.');
+                if (!should_show_download_page((string)$row['filename'], (string)$row['mime_type'])) {
+                    throw new RuntimeException('حماية كلمة المرور متاحة فقط للملفات القابلة لصفحة التنزيل مثل ZIP/RAR وغيرها.');
+                }
+                $hash = $password === '' ? null : password_hash($password, PASSWORD_DEFAULT);
+                $st = $pdo->prepare('UPDATE files SET password_hash=? WHERE id=? AND user_id=?');
+                $st->execute([$hash, $id, $user['id']]);
+            } else {
+                throw new RuntimeException('نوع العنصر غير صالح.');
+            }
         }
 
         if ($action === 'toggle_share_file') {
@@ -1509,9 +1571,6 @@ function drawRegionsMap() {
       </div>
       <div id="selectionMeta" class="selection-meta"></div>
     </div>
-
-
-    <a class="logout" href="/logout"><i class="fas fa-sign-out-alt"></i> خروج</a>
   </aside>
 
   <main class="content">
@@ -1566,7 +1625,7 @@ function drawRegionsMap() {
     <div class="files-grid" id="filesGrid">
       <?php if (!$files): ?><div class="empty">لا توجد ملفات.</div><?php endif; ?>
       <?php foreach ($files as $f): ?>
-      <div class="file-grid-card folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-file-url="<?= htmlspecialchars(file_url($f)) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-home-shared="<?= !empty($f['home_shared']) ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>">
+      <div class="file-grid-card folder-card" data-type="file" data-id="<?= (int)$f['id'] ?>" data-name="<?= htmlspecialchars($f['filename']) ?>" data-file-url="<?= htmlspecialchars(file_url($f)) ?>" data-shared="<?= $f['shared_token'] ? '1':'0' ?>" data-home-shared="<?= !empty($f['home_shared']) ? '1':'0' ?>" data-share-url="<?= $f['shared_token'] ? htmlspecialchars(share_url($f['shared_token'], (string)$f['filename'])) : '' ?>" data-password-eligible="<?= should_show_download_page((string)$f['filename'], (string)$f['mime_type']) ? '1':'0' ?>">
         <div class="file-grid-thumb-link">
           <?php if (str_starts_with((string)$f['mime_type'], 'image/')): ?><img src="<?= htmlspecialchars(file_url($f)) ?>" alt="thumb" />
           <?php else: ?><div class="folder-placeholder">📄</div><?php endif; ?>
@@ -2134,6 +2193,12 @@ function openMenu(ev, el){
   ev.preventDefault();
   if(!selectedItems.includes(el)) pickOne(el);
   currentTarget=el;
+  const isFile=el?.dataset?.type==='file';
+  const passwordEligible = isFile ? (el.dataset.passwordEligible==='1') : (el?.dataset?.type==='folder');
+  ctxMenu?.querySelectorAll('button').forEach(btn=>btn.classList.remove('hidden'));
+  ctxMenu?.querySelector('[data-cmd="copy"]')?.classList.toggle('hidden', !isFile);
+  ctxMenu?.querySelector('[data-cmd="download"]')?.classList.toggle('hidden', !isFile);
+  ctxMenu?.querySelector('[data-cmd="password"]')?.classList.toggle('hidden', !passwordEligible);
   const pad=10;
   const menuW=260, menuH=330;
   const left=Math.min(ev.clientX, window.innerWidth-menuW-pad);
@@ -2235,7 +2300,15 @@ async function submitCmd(cmd, el){
     openRenameModal(el);
     return;
   }
-  if(cmd==='password'){ showToast('ميزة حماية كلمة المرور ستتوفر قريباً.','info'); return; }
+  if(cmd==='password'){
+    const isFolder=type==='folder';
+    if(!isFolder && el.dataset.passwordEligible!=='1'){ showToast('الحماية متاحة للمجلدات أو الملفات مثل ZIP/RAR فقط.','warn'); return; }
+    const entered=prompt('أدخل كلمة المرور (اتركها فارغة لإزالة الحماية):','');
+    if(entered===null) return;
+    await postAction('set_password',{id:id,target_type:isFolder?'folder':'file',password:entered});
+    showToast(entered.trim() ? 'تم حفظ كلمة المرور' : 'تمت إزالة كلمة المرور','success');
+    return;
+  }
   if(cmd==='move'){
     openMoveModal([el]);
     return;

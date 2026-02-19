@@ -156,3 +156,14 @@ select{border-radius:10px;border:1px solid #d3d8e3;background:#fff;padding:0 10p
 .new-btn i,.new-menu button i,.logout i{margin-inline-start:6px}
 .new-menu button{display:flex;align-items:center;gap:8px}
 .section-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.section-head h2{margin:0;font-size:30px}.danger-btn{height:38px;border-radius:10px;border:1px solid #7f1d1d;background:#991b1b;color:#fff;display:inline-flex;align-items:center;gap:8px;padding:0 12px}.danger-btn:hover{background:#b91c1c}
+
+
+/* Compact folder cards like quick chips */
+.folders-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.folders-grid .folder-card{width:100%;min-height:56px;padding:8px 10px;display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:10px;background:linear-gradient(180deg,#111827,#0f172a);border:1px solid #1f2937;color:#e5e7eb;border-radius:12px;box-shadow:0 2px 10px #0000002b}
+.folders-grid .folder-card:hover{transform:translateY(-1px);box-shadow:0 6px 14px #00000040}
+.folders-grid .folder-card img,.folders-grid .folder-card .folder-placeholder{width:24px;height:24px;min-width:24px;border-radius:6px;background:#1e293b;font-size:14px;color:#f8fafc}
+.folders-grid .folder-card strong{margin:0;text-align:right;color:#f8fafc;font-size:15px}
+
+/* Expand upload panel in the free sidebar space */
+.sidebar #uploadProgress{margin-top:auto}
