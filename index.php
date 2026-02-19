@@ -1826,9 +1826,9 @@ function syncUploadOverlayPosition(){
 }
 window.addEventListener('resize', syncUploadOverlayPosition);
 
-const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB
-const CHUNK_CONCURRENCY = 1; // مع FILE_CONCURRENCY=8 نحافظ على حد 8 اتصالات رفع فعلية
-const FILE_CONCURRENCY = 8;
+const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
+const CHUNK_CONCURRENCY = 8; // 8 اتصالات متزامنة لكل ملف
+const FILE_CONCURRENCY = 1; // كل ملف يرفع بشكل مستقل ثم التالي
 
 function generateUploadId(){
   return 'up_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10);
