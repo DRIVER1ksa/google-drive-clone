@@ -1581,7 +1581,7 @@ function drawRegionsMap() {
     <input id="quickFolderInput" type="file" webkitdirectory directory multiple class="hidden" />
     <div id="dropUploadOverlay" class="drop-upload-overlay hidden"><div class="drop-upload-box">أفلت الملفات هنا لرفعها مباشرة</div></div>
 
-    <div class="section-head"><h2><?= $route==='home' ? 'المجلدات المشتركة' : htmlspecialchars($pageTitle) ?></h2><?php if ($route==='trash'): ?><button type="button" id="emptyTrashBtn" class="danger-btn"><i class="fas fa-trash"></i> حذف نهائي لكل الملفات</button><?php endif; ?></div>
+    <div class="section-head"><h2><?= $route==='home' ? 'المجلدات المشتركة' : htmlspecialchars($pageTitle) ?></h2></div>
 
     <div id="selectionSurface" class="selection-surface">
     <?php if ($route === 'home'): ?>
@@ -1641,6 +1641,7 @@ function drawRegionsMap() {
     </div>
     <div id="dragSelectionBox" class="drag-selection-box hidden" aria-hidden="true"></div>
     </div>
+    <?php if ($route==='trash'): ?><button type="button" id="emptyTrashBtn" class="danger-btn floating-trash-btn hidden"><i class="fas fa-trash"></i> حذف الملفات المحددة نهائياً (<span id="emptyTrashCount">0</span>)</button><?php endif; ?>
   </main>
 </div>
 
@@ -1817,6 +1818,14 @@ const UPLOAD_ENDPOINT = '/files';
 let uploadInProgress = false;
 let activeUploadState = null;
 
+
+function syncUploadOverlayPosition(){
+  if(!pWrap || !storageCard) return;
+  const top=Math.max(0, storageCard.offsetTop-2);
+  pWrap.style.top=top+'px';
+}
+window.addEventListener('resize', syncUploadOverlayPosition);
+
 const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB
 const CHUNK_CONCURRENCY = 1; // مع FILE_CONCURRENCY=8 نحافظ على حد 8 اتصالات رفع فعلية
 const FILE_CONCURRENCY = 8;
@@ -1976,6 +1985,7 @@ async function uploadBatch(files, isFolder=false){
   uploadInProgress = true;
 
   if(uploadCancelBtn){ uploadCancelBtn.disabled=false; uploadCancelBtn.classList.remove('hidden'); uploadCancelBtn.innerHTML='<i class="fas fa-ban"></i> إلغاء الرفع'; }
+  syncUploadOverlayPosition();
   pWrap.classList.remove('hidden');
   pBar.style.width='0%';
   pText.textContent='0%';
@@ -2108,6 +2118,8 @@ const renameCurrentLabel=document.getElementById('renameCurrentLabel');
 const renameSaveBtn=document.getElementById('renameSaveBtn');
 const renameCancelBtn=document.getElementById('renameCancelBtn');
 const emptyTrashBtn=document.getElementById('emptyTrashBtn');
+const emptyTrashCount=document.getElementById('emptyTrashCount');
+const storageCard=document.querySelector('.storage-card');
 const toastRoot=document.getElementById('toastRoot');
 let currentTarget=null;
 let selectedItems=[];
@@ -2158,6 +2170,7 @@ function setSelected(items){
   if(selectionBar) selectionBar.classList.toggle('hidden', selectedItems.length<2);
   updateSelectionActions();
   updateSelectionMeta();
+  updateTrashSelectionAction();
 }
 function pickOne(el){ setSelected([el]); currentTarget=el; }
 function getPrimary(){ return currentTarget || selectedItems[0] || null; }
@@ -2580,11 +2593,24 @@ renameSaveBtn?.addEventListener('click', async ()=>{
 });
 renameInput?.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); renameSaveBtn?.click(); }});
 
+function updateTrashSelectionAction(){
+  if(!emptyTrashBtn || window.location.pathname!=='/trash') return;
+  const fileCount=selectedItems.filter(el=>el.dataset.type==='file').length;
+  if(emptyTrashCount) emptyTrashCount.textContent=String(fileCount);
+  emptyTrashBtn.classList.toggle('hidden', fileCount<1);
+}
+
 emptyTrashBtn?.addEventListener('click', async ()=>{
-  if(!confirm('هل تريد حذف كل الملفات من سلة المهملات نهائياً؟')) return;
-  await postAction('empty_trash',{});
-  showToast('تم حذف كل ملفات سلة المهملات نهائياً','success');
-  setTimeout(()=>location.reload(), 300);
+  const targets=selectedItems.filter(el=>el.dataset.type==='file');
+  if(!targets.length){ showToast('حدد ملفاً واحداً على الأقل.','warn'); return; }
+  if(!confirm(`هل تريد حذف ${targets.length} ملف نهائياً من سلة المهملات؟`)) return;
+  for(const el of targets){
+    await postAction('delete',{id:el.dataset.id});
+    el.remove();
+  }
+  showToast('تم حذف الملفات المحددة نهائياً','success');
+  setSelected([]);
+  updateTrashSelectionAction();
 });
 
 shareHomeToggle?.addEventListener('change', async ()=>{
@@ -2618,6 +2644,7 @@ shareCopyBtn?.addEventListener('click', async ()=>{
   await navigator.clipboard.writeText(full);
   showToast('تم نسخ الرابط','success');
   updateSelectionMeta();
+  updateTrashSelectionAction();
 });
 
 document.querySelectorAll('.home-shared-card').forEach(card=>{
